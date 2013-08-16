@@ -62,32 +62,59 @@
   (and (collection-implements? c 'make-empty)
        (collection-implements? c 'cons)))
 
+(define (can-do-stateful-building? c)
+  (collection-implements? c 'make-builder))
+
 (define (fallback-range c n)
-  (unless (can-do-structural-building? c)
-    (error "cannot build collection" c))
-  ;; TODO extend with stateful building
-  (let loop ([n (sub1 n)] [acc (make-empty c)])
-    (if (< n 0)
-        acc
-        (loop (sub1 n) (cons n acc)))))
+  (cond
+   [(can-do-structural-building? c)
+    (let loop ([n (sub1 n)] [acc (make-empty c)])
+      (if (< n 0)
+          acc
+          (loop (sub1 n) (cons n acc))))]
+   [(can-do-stateful-building? c)
+    (define builder (make-builder c))
+    (let loop ([i 0])
+      (when (< i n)
+        (add-next i builder)
+        (loop (add1 i))))
+    (finalize builder)]
+   [else
+    (error "cannot build collection" c)]))
 
 (define (fallback-make c n v)
-  (unless (can-do-structural-building? c)
-    (error "cannot build collection" c))
-  ;; TODO extend with stateful building
-  (let loop ([n n] [acc (make-empty c)])
-    (if (= n 0)
-        acc
-        (loop (sub1 n) (cons v acc)))))
+  (cond
+   [(can-do-structural-building? c)
+    (let loop ([n n] [acc (make-empty c)])
+      (if (= n 0)
+          acc
+          (loop (sub1 n) (cons v acc))))]
+   [(can-do-stateful-building? c)
+    (define builder (make-builder c))
+    (let loop ([i 0])
+      (when (< i n)
+        (add-next v builder)
+        (loop (add1 i))))
+    (finalize builder)]
+   [else
+    (error "cannot build collection" c)]))
 
 (define (fallback-build c n f)
-  (unless (can-do-structural-building? c)
-    (error "cannot build collection" c))
-  ;; TODO extend with stateful building
-  (let loop ([n (sub1 n)] [acc (make-empty c)])
-    (if (< n 0)
-        acc
-        (loop (sub1 n) (cons (f n) acc)))))
+  (cond
+   [(can-do-structural-building? c)
+    (let loop ([n (sub1 n)] [acc (make-empty c)])
+      (if (< n 0)
+          acc
+          (loop (sub1 n) (cons (f n) acc))))]
+   [(can-do-stateful-building? c)
+    (define builder (make-builder c))
+    (let loop ([i 0])
+      (when (< i n)
+        (add-next (f i) builder)
+        (loop (add1 i))))
+    (finalize builder)]
+   [else
+    (error "cannot build collection" c)]))
 
 (define (fallback-map f c)
   (unless (can-do-structural-traversal? c)
@@ -124,6 +151,8 @@
   ;;    above groups of methods)
   ;;  - structural building (a la empty+cons)
   ;;  - stateful building (with an explicit constructor)
+  ;;    uses an auxiliary struct that implements `gen:builder'
+  ;;    TODO is there a use for a functional version of `gen:builder'?
   ;;    TODO same as stateful traversals, maybe have an auxiliary builder
   ;;     structure (that implements a gen:builder) and call *its* methods
   ;;  - derived building (unfold, range and co. again with fallbacks)
@@ -155,7 +184,7 @@
   ;; TODO alternative API: `make-empty' and `get-cons' (returns cons)
 
   ;; Stateful building
-  ;; TODO
+  [make-builder collection] ; returns a gen:builder
 
   ;; Derived building
   ;; TODO ugh, kind of ugly to take a dummy coll. as arg...
@@ -194,6 +223,13 @@
 (define-generics iterator
   [has-next? iterator]
   [next iterator])
+
+(define-generics builder
+  [add-next x builder]
+  [finalize builder]) ; returns a gen:collection
+;; TODO this only builds "in order", but order is defined by the builder
+;; TODO more efficient building (e.g. if we know the size in advance) can
+;;  be done by overriding derived methods. can we do better?
 
 
 ;; TODO actually, not really a kons list. try a real one too (spine of structs)
@@ -293,7 +329,9 @@
 (struct vektor (v) #:transparent
         #:methods gen:collection
         [(define (make-iterator v)
-           (vektor-iterator (vektor-v v) 0 (vector-length (vektor-v v))))])
+           (vektor-iterator (vektor-v v) 0 (vector-length (vektor-v v))))
+         (define (make-builder v)
+           (vektor-builder '()))])
 
 (struct vektor-iterator (v i l) #:mutable
         #:methods gen:iterator
@@ -303,15 +341,30 @@
            (begin0 (vector-ref (vektor-iterator-v v) (vektor-iterator-i v))
              (set-vektor-iterator-i! v (add1 (vektor-iterator-i v)))))])
 
-(module+ test
-  (check-equal? (length (vektor '#(1 2 3))) 3)
+;; Uses an intermediate list. Not sure how to do better without "size hints".
+(struct vektor-builder (l) #:mutable
+        #:methods gen:builder
+        [(define (add-next x v)
+           (set-vektor-builder-l! v (r:cons x (vektor-builder-l v))))
+         (define (finalize v)
+           (vektor (list->vector (reverse (vektor-builder-l v)))))])
 
-  (check-equal? (foldr + 0 (vektor '#())) 0)
-  (check-equal? (foldr + 0 (vektor '#(1 2 3))) 6)
-  (check-equal? (foldr - 0 (vektor '#())) 0)
-  (check-equal? (foldr - 0 (vektor '#(1 2 3))) 2)
-  (check-equal? (foldl - 0 (vektor '#())) 0)
-  (check-equal? (foldl - 0 (vektor '#(1 2 3))) 2)
-  (check-equal? (foldr r:cons '() (vektor '#(1 2 3))) '(1 2 3))
-  (check-equal? (foldl r:cons '() (vektor '#(1 2 3))) '(3 2 1))
-  )
+(module+ test
+  (let ()
+    (define mt (vektor '#()))
+
+    (check-equal? (length (vektor '#(1 2 3))) 3)
+
+    (check-equal? (foldr + 0 (vektor '#())) 0)
+    (check-equal? (foldr + 0 (vektor '#(1 2 3))) 6)
+    (check-equal? (foldr - 0 (vektor '#())) 0)
+    (check-equal? (foldr - 0 (vektor '#(1 2 3))) 2)
+    (check-equal? (foldl - 0 (vektor '#())) 0)
+    (check-equal? (foldl - 0 (vektor '#(1 2 3))) 2)
+    (check-equal? (foldr r:cons '() (vektor '#(1 2 3))) '(1 2 3))
+    (check-equal? (foldl r:cons '() (vektor '#(1 2 3))) '(3 2 1))
+
+    (check-equal? (range mt 4) (vektor '#(0 1 2 3)))
+    (check-equal? (make mt 4 'a) (vektor '#(a a a a)))
+    (check-equal? (build mt 4 add1) (vektor '#(1 2 3 4)))
+    ))
