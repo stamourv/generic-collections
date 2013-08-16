@@ -9,29 +9,54 @@
        (collection-implements? c 'first)
        (collection-implements? c 'rest)))
 
+(define (can-do-stateful-traversal? c)
+  (collection-implements? c 'make-iterator))
+
 (define (fallback-length c)
-  (unless (can-do-structural-traversal? c)
-    (error "cannot traverse collection" c))
-  ;; TODO extend with indexed traversals
-  (if (empty? c)
-      0
-      (add1 (length (rest c)))))
+  (cond
+   [(can-do-structural-traversal? c)
+    (if (empty? c)
+        0
+        (add1 (length (rest c))))]
+   [(can-do-stateful-traversal? c)
+    (define it (make-iterator c))
+    (let loop ([n 0])
+      (if (has-next? it)
+          (begin (next it)
+                 (loop (add1 n)))
+          n))]
+   [else
+    (error "cannot traverse collection" c)]))
 
 (define (fallback-foldr f b c)
-  (unless (can-do-structural-traversal? c)
-    (error "cannot traverse collection" c))
-  ;; TODO extend with indexed traversals
-  (if (empty? c)
-      b
-      (f (first c) (foldr f b (rest c)))))
+  (cond
+   [(can-do-structural-traversal? c)
+    (if (empty? c)
+        b
+        (f (first c) (foldr f b (rest c))))]
+   [(can-do-stateful-traversal? c)
+    (define it (make-iterator c))
+    (let loop ([acc b])
+      (if (has-next? it)
+          (f (next it) (loop acc))
+          acc))]
+   [else
+    (error "cannot traverse collection" c)]))
 
 (define (fallback-foldl f b c)
-  (unless (can-do-structural-traversal? c)
-    (error "cannot traverse collection" c))
-  ;; TODO extend with indexed traversals
-  (if (empty? c)
-      b
-      (foldl f (f (first c) b) (rest c))))
+  (cond
+   [(can-do-structural-traversal? c)
+    (if (empty? c)
+        b
+        (foldl f (f (first c) b) (rest c)))]
+   [(can-do-stateful-traversal? c)
+    (define it (make-iterator c))
+    (let loop ([acc b])
+      (if (has-next? it)
+          (loop (f (next it) acc))
+          acc))]
+   [else
+    (error "cannot traverse collection" c)]))
 
 (define (can-do-structural-building? c)
   (and (collection-implements? c 'make-empty)
@@ -40,7 +65,7 @@
 (define (fallback-range c n)
   (unless (can-do-structural-building? c)
     (error "cannot build collection" c))
-  ;; TODO extend with indexed building
+  ;; TODO extend with stateful building
   (let loop ([n (sub1 n)] [acc (make-empty c)])
     (if (< n 0)
         acc
@@ -49,7 +74,7 @@
 (define (fallback-make c n v)
   (unless (can-do-structural-building? c)
     (error "cannot build collection" c))
-  ;; TODO extend with indexed building
+  ;; TODO extend with stateful building
   (let loop ([n n] [acc (make-empty c)])
     (if (= n 0)
         acc
@@ -58,7 +83,7 @@
 (define (fallback-build c n f)
   (unless (can-do-structural-building? c)
     (error "cannot build collection" c))
-  ;; TODO extend with indexed building
+  ;; TODO extend with stateful building
   (let loop ([n (sub1 n)] [acc (make-empty c)])
     (if (< n 0)
         acc
@@ -69,7 +94,7 @@
     (error "cannot traverse collection" c))
   (unless (can-do-structural-building? c)
     (error "cannot build collection" c))
-  ;; TODO indexed too
+  ;; TODO stateful too
   ;; TODO dumb, but that's a start
   (foldr (lambda (new acc) (cons (f new) acc)) (make-empty c) c))
 
@@ -78,7 +103,7 @@
     (error "cannot traverse collection" c))
   (unless (can-do-structural-building? c)
     (error "cannot build collection" c))
-  ;; TODO indexed too
+  ;; TODO stateful too
   ;; TODO dumb, but that's a start
   (foldr (lambda (new acc)
            (if (f new)
@@ -91,21 +116,21 @@
 (define-generics collection
   ;; This interface has the following groups of methods:
   ;;  - structural traversal (a la gen:stream, for list-likes)
-  ;;  - indexed traversal (a la iterator pattern, for vector-likes)
-  ;;    TODO these would need an auxiliary iterator structure to hold the
-  ;;     iteration state. maybe have gen:iterator for those? (and have the
-  ;;     derived traversals call the iterator's methods)
+  ;;  - stateful traversal (a la iterator pattern, for vector-likes)
+  ;;    uses an auxiliary struct that implements `gen:iterator'
+  ;;    TODO is there a use for a functional version of `gen:iterator'
+  ;;     that would return a fresh iterator every call to `next'?
   ;;  - derived traversals (fold and co. with fallbacks using either of the
   ;;    above groups of methods)
   ;;  - structural building (a la empty+cons)
-  ;;  - indexed building (with an explicit constructor)
-  ;;    TODO same as indexed traversals, maybe have an auxiliary builder
+  ;;  - stateful building (with an explicit constructor)
+  ;;    TODO same as stateful traversals, maybe have an auxiliary builder
   ;;     structure (that implements a gen:builder) and call *its* methods
   ;;  - derived building (unfold, range and co. again with fallbacks)
   ;;  - "transducers" (for lack of a better name) (map and co. need both
   ;;    a way to traverse and a way to build. again with fallbacks)
   ;;  TODO also a group for in-place (mutation-based) building? or it that
-  ;;   covered by indexed building? (I guess order wouldn't be defined, which
+  ;;   covered by stateful building? (I guess order wouldn't be defined, which
   ;;   is a problem for in-place changes. still, can override methods that
   ;;   traverse in wrong order)
 
@@ -115,8 +140,8 @@
   [first collection]
   [rest collection]
   
-  ;; Indexed traversal
-  ;; TODO
+  ;; Stateful traversal
+  [make-iterator collection] ; returns a gen:iterator
   
   ;; Derived traversals
   [length collection]
@@ -129,7 +154,7 @@
   [cons x collection]
   ;; TODO alternative API: `make-empty' and `get-cons' (returns cons)
 
-  ;; Indexed building
+  ;; Stateful building
   ;; TODO
 
   ;; Derived building
@@ -164,6 +189,11 @@
    ]
   ;; TODO add defaults (lists, vectors, etc.)
   )
+
+;; Interface taken from Java / Scala
+(define-generics iterator
+  [has-next? iterator]
+  [next iterator])
 
 
 ;; TODO actually, not really a kons list. try a real one too (spine of structs)
@@ -259,3 +289,29 @@
 (module+ test
   (check-exn exn:fail? (lambda () (length 'not-a-collection)))
   (check-exn exn:fail? (lambda () (length (not-really-a-collection)))))
+
+(struct vektor (v) #:transparent
+        #:methods gen:collection
+        [(define (make-iterator v)
+           (vektor-iterator (vektor-v v) 0 (vector-length (vektor-v v))))])
+
+(struct vektor-iterator (v i l) #:mutable
+        #:methods gen:iterator
+        [(define (has-next? v)
+           (< (vektor-iterator-i v) (vektor-iterator-l v)))
+         (define (next v)
+           (begin0 (vector-ref (vektor-iterator-v v) (vektor-iterator-i v))
+             (set-vektor-iterator-i! v (add1 (vektor-iterator-i v)))))])
+
+(module+ test
+  (check-equal? (length (vektor '#(1 2 3))) 3)
+
+  (check-equal? (foldr + 0 (vektor '#())) 0)
+  (check-equal? (foldr + 0 (vektor '#(1 2 3))) 6)
+  (check-equal? (foldr - 0 (vektor '#())) 0)
+  (check-equal? (foldr - 0 (vektor '#(1 2 3))) 2)
+  (check-equal? (foldl - 0 (vektor '#())) 0)
+  (check-equal? (foldl - 0 (vektor '#(1 2 3))) 2)
+  (check-equal? (foldr r:cons '() (vektor '#(1 2 3))) '(1 2 3))
+  (check-equal? (foldl r:cons '() (vektor '#(1 2 3))) '(3 2 1))
+  )
