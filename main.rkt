@@ -1,15 +1,16 @@
 #lang racket
 
 (require racket/generic
-         [prefix-in l: racket/list])
+         (prefix-in l: racket/list)
+         (only-in racket/base [cons l:cons]))
 
-(define (can-do-functional-traversal? c)
+(define (can-do-structural-traversal? c)
   (and (collection-implements? c 'empty?)
        (collection-implements? c 'first)
        (collection-implements? c 'rest)))
 
 (define (fallback-length c)
-  (unless (can-do-functional-traversal? c)
+  (unless (can-do-structural-traversal? c)
     (error "cannot traverse collection" c))
   ;; TODO extend with indexed traversals
   (if (empty? c)
@@ -17,7 +18,7 @@
       (add1 (length (rest c)))))
 
 (define (fallback-foldr f b c)
-  (unless (can-do-functional-traversal? c)
+  (unless (can-do-structural-traversal? c)
     (error "cannot traverse collection" c))
   ;; TODO extend with indexed traversals
   (if (empty? c)
@@ -25,12 +26,43 @@
       (f (first c) (foldr f b (rest c)))))
 
 (define (fallback-foldl f b c)
-  (unless (can-do-functional-traversal? c)
+  (unless (can-do-structural-traversal? c)
     (error "cannot traverse collection" c))
   ;; TODO extend with indexed traversals
   (if (empty? c)
       b
       (foldl f (f (first c) b) (rest c))))
+
+(define (can-do-structural-building? c)
+  (and (collection-implements? c 'make-empty)
+       (collection-implements? c 'cons)))
+
+(define (fallback-range c n)
+  (unless (can-do-structural-building? c)
+    (error "cannot build collection" c))
+  ;; TODO extend with indexed building
+  (let loop ([n (sub1 n)] [acc (make-empty c)])
+    (if (< n 0)
+        acc
+        (loop (sub1 n) (cons n acc)))))
+
+(define (fallback-make c n v)
+  (unless (can-do-structural-building? c)
+    (error "cannot build collection" c))
+  ;; TODO extend with indexed building
+  (let loop ([n n] [acc (make-empty c)])
+    (if (= n 0)
+        acc
+        (loop (sub1 n) (cons v acc)))))
+
+(define (fallback-build c n f)
+  (unless (can-do-structural-building? c)
+    (error "cannot build collection" c))
+  ;; TODO extend with indexed building
+  (let loop ([n (sub1 n)] [acc (make-empty c)])
+    (if (< n 0)
+        acc
+        (loop (sub1 n) (cons (f n) acc)))))
 
 
 (define-generics collection
@@ -64,54 +96,95 @@
   [foldl f base collection]
   ;; TODO others
 
-  ;; TODO other groups
+  ;; Structural building
+  [make-empty collection] ; returns a new empty coll. (think `(λ (l) '())')
+  [cons x collection]
+  ;; TODO alternative API: `make-empty' and `get-cons' (returns cons)
 
+  ;; Indexed building
+  ;; TODO
+
+  ;; Derived building
+  ;; TODO ugh, kind of ugly to take a dummy coll. as arg...
+  ;;  need something to dispatch on. maybe also offer monomorphic versions
+  ;;  OR have collection be an opt/kw arg and default to lists
+  ;;  OR have the option to pass in empty (or maybe make-empty) and cons
+  [range collection n] ; TODO extend to fall API, with opt args
+  [make  collection n v] ; think make-list
+  [build collection n f] ; think build-list
+  ;; TODO unfold
+  ;; TODO test overrides for these
+  ;; TODO others
+
+  #:defined-predicate collection-implements?
   #:fallbacks
   [
    ;; Derived traversals, depend on either kind of basic traversals
    (define length fallback-length)
    (define foldr  fallback-foldr)
    (define foldl  fallback-foldl)
+   (define range  fallback-range)
+   (define make   fallback-make)
+   (define build  fallback-build)
    ]
-  #:defined-predicate collection-implements?
+  ;; TODO add defaults (lists, vectors, etc.)
   )
 
 
-(struct kons-list (elts)
+;; TODO actually, not really a kons list. try a real one too (spine of structs)
+(struct kons-list (elts) #:transparent
         #:methods gen:collection
         [(define (empty? k)
            (l:empty? (kons-list-elts k)))
          (define (first k)
            (car (kons-list-elts k)))
          (define (rest k)
-           (kons-list (cdr (kons-list-elts k))))])
+           (kons-list (cdr (kons-list-elts k))))
+         (define (make-empty k)
+           (kons-list '()))
+         (define (cons x k)
+           (kons-list (l:cons x (kons-list-elts k))))])
 
 (module+ test
   (require rackunit)
 
-  (check-equal? (length (kons-list '())) 0)
-  (check-equal? (length (kons-list '(1))) 1)
-  (check-equal? (length (kons-list '(1 2 3))) 3)
-  
-  (check-equal? (foldr + 0 (kons-list '())) 0)
-  (check-equal? (foldr + 0 (kons-list '(1 2 3))) 6)
-  (check-equal? (foldr - 0 (kons-list '())) 0)
-  (check-equal? (foldr - 0 (kons-list '(1 2 3))) 2)
-  (check-equal? (foldl - 0 (kons-list '())) 0)
-  (check-equal? (foldl - 0 (kons-list '(1 2 3))) 2)
-  ;; TODO have a test that uses (kons-list '()) as the base case, once we have builders
-  (check-equal? (foldr cons '() (kons-list '(1 2 3))) '(1 2 3))
-  (check-equal? (foldl cons '() (kons-list '(1 2 3))) '(3 2 1))
+  (let ()
+    (define mt (kons-list '()))
+    (check-equal? (length (kons-list '())) 0)
+    (check-equal? (length (kons-list '(1))) 1)
+    (check-equal? (length (kons-list '(1 2 3))) 3)
+    
+    (check-equal? (foldr + 0 (kons-list '())) 0)
+    (check-equal? (foldr + 0 (kons-list '(1 2 3))) 6)
+    (check-equal? (foldr - 0 (kons-list '())) 0)
+    (check-equal? (foldr - 0 (kons-list '(1 2 3))) 2)
+    (check-equal? (foldl - 0 (kons-list '())) 0)
+    (check-equal? (foldl - 0 (kons-list '(1 2 3))) 2)
+    (check-equal? (foldr l:cons '() (kons-list '(1 2 3))) '(1 2 3))
+    (check-equal? (foldl l:cons '() (kons-list '(1 2 3))) '(3 2 1))
+    (check-equal? (foldr cons mt (kons-list '(1 2 3))) (kons-list '(1 2 3)))
+    (check-equal? (foldl cons mt (kons-list '(1 2 3))) (kons-list '(3 2 1)))
+
+    (check-equal? (range mt 4) (kons-list '(0 1 2 3)))
+    (check-equal? (make mt 4 'a) (kons-list '(a a a a)))
+    (check-equal? (build mt 4 add1) (kons-list '(1 2 3 4)))
+    )
   )
 
-(struct kons-list/length (l elts)
+(struct kons-list/length (l elts) #:transparent
         #:methods gen:collection
         [(define (empty? k)
            (l:empty? (kons-list/length-elts k)))
          (define (first k)
            (car (kons-list/length-elts k)))
          (define (rest k)
-           (kons-list (cdr (kons-list/length-elts k))))
+           (kons-list/length (sub1 (kons-list/length-l k))
+                             (cdr (kons-list/length-elts k))))
+         (define (make-empty k)
+           (kons-list/length 0 '()))
+         (define (cons x k)
+           (kons-list/length (add1 (kons-list/length-l k))
+                             (l:cons x (kons-list/length-elts k))))
          ;; overrides
          (define (length k)
            (kons-list/length-l k))
@@ -124,6 +197,17 @@
   (check-equal? (length (kons-list/length 3 '(1 2 3))) 3)
   (check-equal? (length (kons-list/length -2 '(1 2 3))) -2)
   (check-equal? (foldr 0 + (kons-list/length 1 '(1))) 'dummy)
+
+  (let ()
+    (define mt (kons-list/length 0 '()))
+    (check-equal? (foldl cons mt (kons-list/length 3 '(1 2 3)))
+                  (kons-list/length 3 '(3 2 1)))
+    (check-equal? (foldl cons mt (kons-list/length -2 '(1 2 3)))
+                  (kons-list/length 3 '(3 2 1)))
+    (check-equal? (range mt 4) (kons-list/length 4 '(0 1 2 3)))
+    (check-equal? (make mt 4 'a) (kons-list/length 4 '(a a a a)))
+    (check-equal? (build mt 4 add1) (kons-list/length 4 '(1 2 3 4)))
+    )
   )
 
 (struct not-really-a-collection ()
