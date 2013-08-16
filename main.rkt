@@ -117,27 +117,59 @@
     (error "cannot build collection" c)]))
 
 (define (fallback-map f c)
-  (unless (can-do-structural-traversal? c)
-    (error "cannot traverse collection" c))
-  (unless (can-do-structural-building? c)
-    (error "cannot build collection" c))
-  ;; TODO stateful too
-  ;; TODO dumb, but that's a start
-  (foldr (lambda (new acc) (cons (f new) acc)) (make-empty c) c))
+  (cond
+   [(and (can-do-structural-traversal? c)
+         (can-do-structural-building? c))
+    ;; TODO dumb, but that's a start
+    (foldr (lambda (new acc) (cons (f new) acc)) (make-empty c) c)]
+   [(and (can-do-stateful-traversal? c)
+         (can-do-stateful-building? c))
+    (define iterator (make-iterator c))
+    (define builder  (make-builder  c))
+    (let loop ()
+      (when (has-next? iterator)
+        (add-next (f (next iterator)) builder)
+        (loop)))
+    (finalize builder)]
+   ;; TODO are the structural / stateful combinations interesting?
+   [else
+    (unless (or (can-do-structural-traversal? c)
+                (can-do-stateful-traversal? c))
+      (error "cannot traverse collection" c))
+    (unless (or (can-do-structural-building? c)
+                (can-do-stateful-building? c))
+      (error "cannot build collection" c))]))
 
 (define (fallback-filter f c)
-  (unless (can-do-structural-traversal? c)
-    (error "cannot traverse collection" c))
-  (unless (can-do-structural-building? c)
-    (error "cannot build collection" c))
-  ;; TODO stateful too
-  ;; TODO dumb, but that's a start
-  (foldr (lambda (new acc)
-           (if (f new)
-               (cons new acc)
-               acc))
-         (make-empty c)
-         c))
+  (cond
+   [(and (can-do-structural-traversal? c)
+         (can-do-structural-building? c))
+    ;; TODO dumb, but that's a start
+    (foldr (lambda (new acc)
+             (if (f new)
+                 (cons new acc)
+                 acc))
+           (make-empty c)
+           c)]
+   [(and (can-do-stateful-traversal? c)
+         (can-do-stateful-building? c))
+    (define iterator (make-iterator c))
+    (define builder  (make-builder  c))
+    (let loop ()
+      (when (has-next? iterator)
+        (define n (next iterator))
+        (when (f n)
+          (add-next n builder))
+        (loop)))
+    (finalize builder)]
+   ;; TODO are the structural / stateful combinations interesting?
+   [else
+    (unless (or (can-do-structural-traversal? c)
+                (can-do-stateful-traversal? c))
+      (error "cannot traverse collection" c))
+    (unless (or (can-do-structural-building? c)
+                (can-do-stateful-building? c))
+      (error "cannot build collection" c))]))
 
 
 (define-generics collection
@@ -367,4 +399,7 @@
     (check-equal? (range mt 4) (vektor '#(0 1 2 3)))
     (check-equal? (make mt 4 'a) (vektor '#(a a a a)))
     (check-equal? (build mt 4 add1) (vektor '#(1 2 3 4)))
+
+    (check-equal? (map add1 (vektor '#(1 2 3 4))) (vektor '#(2 3 4 5)))
+    (check-equal? (filter odd? (vektor '#(1 2 3 4))) (vektor '#(1 3)))
     ))
