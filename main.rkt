@@ -1,5 +1,11 @@
 #lang racket
 
+;;; Interface definition (and "documentation") below.
+
+
+;;;---------------------------------------------------------------------------
+;;; Fallback implementations
+
 (require racket/generic
          (prefix-in l: racket/list)
          (prefix-in r: racket/base))
@@ -172,6 +178,10 @@
       (error "cannot build collection" c))]))
 
 
+
+;;;---------------------------------------------------------------------------
+;;; Interface definition
+
 (define-generics collection
   ;; This interface has the following groups of methods:
   ;;  - structural traversal (a la gen:stream, for list-likes)
@@ -263,6 +273,10 @@
 ;; TODO more efficient building (e.g. if we know the size in advance) can
 ;;  be done by overriding derived methods. can we do better?
 
+
+
+;;;---------------------------------------------------------------------------
+;;; Tests
 
 ;; TODO actually, not really a kons list. try a real one too (spine of structs)
 (struct kons-list (elts) #:transparent
