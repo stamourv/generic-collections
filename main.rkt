@@ -2,7 +2,7 @@
 
 (require racket/generic
          (prefix-in l: racket/list)
-         (only-in racket/base [cons l:cons]))
+         (prefix-in r: racket/base))
 
 (define (can-do-structural-traversal? c)
   (and (collection-implements? c 'empty?)
@@ -173,7 +173,7 @@
          (define (make-empty k)
            (kons-list '()))
          (define (cons x k)
-           (kons-list (l:cons x (kons-list-elts k))))])
+           (kons-list (r:cons x (kons-list-elts k))))])
 
 (module+ test
   (require rackunit)
@@ -190,8 +190,8 @@
     (check-equal? (foldr - 0 (kons-list '(1 2 3))) 2)
     (check-equal? (foldl - 0 (kons-list '())) 0)
     (check-equal? (foldl - 0 (kons-list '(1 2 3))) 2)
-    (check-equal? (foldr l:cons '() (kons-list '(1 2 3))) '(1 2 3))
-    (check-equal? (foldl l:cons '() (kons-list '(1 2 3))) '(3 2 1))
+    (check-equal? (foldr r:cons '() (kons-list '(1 2 3))) '(1 2 3))
+    (check-equal? (foldl r:cons '() (kons-list '(1 2 3))) '(3 2 1))
     (check-equal? (foldr cons mt (kons-list '(1 2 3))) (kons-list '(1 2 3)))
     (check-equal? (foldl cons mt (kons-list '(1 2 3))) (kons-list '(3 2 1)))
 
@@ -216,7 +216,7 @@
            (kons-list/length 0 '()))
          (define (cons x k)
            (kons-list/length (add1 (kons-list/length-l k))
-                             (l:cons x (kons-list/length-elts k))))
+                             (r:cons x (kons-list/length-elts k))))
          ;; overrides
          (define (length k)
            (kons-list/length-l k))
