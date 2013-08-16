@@ -92,10 +92,15 @@
   ;; This interface has the following groups of methods:
   ;;  - structural traversal (a la gen:stream, for list-likes)
   ;;  - indexed traversal (a la iterator pattern, for vector-likes)
+  ;;    TODO these would need an auxiliary iterator structure to hold the
+  ;;     iteration state. maybe have gen:iterator for those? (and have the
+  ;;     derived traversals call the iterator's methods)
   ;;  - derived traversals (fold and co. with fallbacks using either of the
   ;;    above groups of methods)
   ;;  - structural building (a la empty+cons)
   ;;  - indexed building (with an explicit constructor)
+  ;;    TODO same as indexed traversals, maybe have an auxiliary builder
+  ;;     structure (that implements a gen:builder) and call *its* methods
   ;;  - derived building (unfold, range and co. again with fallbacks)
   ;;  - "transducers" (for lack of a better name) (map and co. need both
   ;;    a way to traverse and a way to build. again with fallbacks)
