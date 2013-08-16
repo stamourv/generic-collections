@@ -64,6 +64,29 @@
         acc
         (loop (sub1 n) (cons (f n) acc)))))
 
+(define (fallback-map f c)
+  (unless (can-do-structural-traversal? c)
+    (error "cannot traverse collection" c))
+  (unless (can-do-structural-building? c)
+    (error "cannot build collection" c))
+  ;; TODO indexed too
+  ;; TODO dumb, but that's a start
+  (foldr (lambda (new acc) (cons (f new) acc)) (make-empty c) c))
+
+(define (fallback-filter f c)
+  (unless (can-do-structural-traversal? c)
+    (error "cannot traverse collection" c))
+  (unless (can-do-structural-building? c)
+    (error "cannot build collection" c))
+  ;; TODO indexed too
+  ;; TODO dumb, but that's a start
+  (foldr (lambda (new acc)
+           (if (f new)
+               (cons new acc)
+               acc))
+         (make-empty c)
+         c))
+
 
 (define-generics collection
   ;; This interface has the following groups of methods:
@@ -116,6 +139,11 @@
   ;; TODO test overrides for these
   ;; TODO others
 
+  ;; Transducers
+  [map f collection]
+  [filter f collection]
+  ;; TODO others
+
   #:defined-predicate collection-implements?
   #:fallbacks
   [
@@ -126,6 +154,8 @@
    (define range  fallback-range)
    (define make   fallback-make)
    (define build  fallback-build)
+   (define map    fallback-map)
+   (define filter fallback-filter)
    ]
   ;; TODO add defaults (lists, vectors, etc.)
   )
@@ -168,8 +198,10 @@
     (check-equal? (range mt 4) (kons-list '(0 1 2 3)))
     (check-equal? (make mt 4 'a) (kons-list '(a a a a)))
     (check-equal? (build mt 4 add1) (kons-list '(1 2 3 4)))
-    )
-  )
+
+    (check-equal? (map add1 (kons-list '(1 2 3 4))) (kons-list '(2 3 4 5)))
+    (check-equal? (filter odd? (kons-list '(1 2 3 4))) (kons-list '(1 3)))
+    ))
 
 (struct kons-list/length (l elts) #:transparent
         #:methods gen:collection
@@ -188,27 +220,32 @@
          ;; overrides
          (define (length k)
            (kons-list/length-l k))
-         (define (foldr f b k)
+         (define (foldl f b k)
            'dummy)])
 
 (module+ test
-  (check-equal? (length (kons-list/length 0 '())) 0)
-  (check-equal? (length (kons-list/length 1 '(1))) 1)
-  (check-equal? (length (kons-list/length 3 '(1 2 3))) 3)
-  (check-equal? (length (kons-list/length -2 '(1 2 3))) -2)
-  (check-equal? (foldr 0 + (kons-list/length 1 '(1))) 'dummy)
-
   (let ()
     (define mt (kons-list/length 0 '()))
-    (check-equal? (foldl cons mt (kons-list/length 3 '(1 2 3)))
-                  (kons-list/length 3 '(3 2 1)))
-    (check-equal? (foldl cons mt (kons-list/length -2 '(1 2 3)))
-                  (kons-list/length 3 '(3 2 1)))
+
+    (check-equal? (length (kons-list/length 0 '())) 0)
+    (check-equal? (length (kons-list/length 1 '(1))) 1)
+    (check-equal? (length (kons-list/length 3 '(1 2 3))) 3)
+    (check-equal? (length (kons-list/length -2 '(1 2 3))) -2)
+    (check-equal? (foldl 0 + (kons-list/length 1 '(1))) 'dummy)
+
+    (check-equal? (foldr cons mt (kons-list/length 3 '(1 2 3)))
+                  (kons-list/length 3 '(1 2 3)))
+    (check-equal? (foldr cons mt (kons-list/length -2 '(1 2 3)))
+                  (kons-list/length 3 '(1 2 3)))
     (check-equal? (range mt 4) (kons-list/length 4 '(0 1 2 3)))
     (check-equal? (make mt 4 'a) (kons-list/length 4 '(a a a a)))
     (check-equal? (build mt 4 add1) (kons-list/length 4 '(1 2 3 4)))
-    )
-  )
+
+    (check-equal? (map add1 (kons-list/length 4 '(1 2 3 4)))
+                  (kons-list/length 4 '(2 3 4 5)))
+    (check-equal? (filter odd? (kons-list/length 4 '(1 2 3 4)))
+                  (kons-list/length 2 '(1 3)))
+    ))
 
 (struct not-really-a-collection ()
         #:methods gen:collection
