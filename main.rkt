@@ -3,22 +3,30 @@
 (require racket/generic
          [prefix-in l: racket/list])
 
+(define (can-do-functional-traversal? c)
+  (and (collection-implements? c 'empty?)
+       (collection-implements? c 'first)
+       (collection-implements? c 'rest)))
+
 (define (fallback-length c)
-  ;; TODO check if the right methods are implemented
+  (unless (can-do-functional-traversal? c)
+    (error "cannot traverse collection" c))
   ;; TODO extend with indexed traversals
   (if (empty? c)
       0
       (add1 (length (rest c)))))
 
 (define (fallback-foldr f b c)
-  ;; TODO check if the right methods are implemented
+  (unless (can-do-functional-traversal? c)
+    (error "cannot traverse collection" c))
   ;; TODO extend with indexed traversals
   (if (empty? c)
       b
       (f (first c) (foldr f b (rest c)))))
 
 (define (fallback-foldl f b c)
-  ;; TODO check if the right methods are implemented
+  (unless (can-do-functional-traversal? c)
+    (error "cannot traverse collection" c))
   ;; TODO extend with indexed traversals
   (if (empty? c)
       b
@@ -65,6 +73,7 @@
    (define foldr  fallback-foldr)
    (define foldl  fallback-foldl)
    ]
+  #:defined-predicate collection-implements?
   )
 
 
@@ -110,10 +119,17 @@
            'dummy)])
 
 (module+ test
-
   (check-equal? (length (kons-list/length 0 '())) 0)
   (check-equal? (length (kons-list/length 1 '(1))) 1)
   (check-equal? (length (kons-list/length 3 '(1 2 3))) 3)
   (check-equal? (length (kons-list/length -2 '(1 2 3))) -2)
   (check-equal? (foldr 0 + (kons-list/length 1 '(1))) 'dummy)
   )
+
+(struct not-really-a-collection ()
+        #:methods gen:collection
+        [])
+
+(module+ test
+  (check-exn exn:fail? (lambda () (length 'not-a-collection)))
+  (check-exn exn:fail? (lambda () (length (not-really-a-collection)))))
