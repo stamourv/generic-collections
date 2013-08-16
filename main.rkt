@@ -252,9 +252,13 @@
    (define length fallback-length)
    (define foldr  fallback-foldr)
    (define foldl  fallback-foldl)
+
+   ;; Derived buildings, depend on either kind of basic building
    (define range  fallback-range)
    (define make   fallback-make)
    (define build  fallback-build)
+
+   ;; Derived transducers, need both a way to traverse and a way to build
    (define map    fallback-map)
    (define filter fallback-filter)
    ]
