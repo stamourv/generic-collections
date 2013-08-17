@@ -122,29 +122,88 @@
    [else
     (error "cannot build collection" c)]))
 
-(define (fallback-map f c)
-  (cond
-   [(and (can-do-structural-traversal? c)
-         (can-do-structural-building? c))
-    ;; TODO dumb, but that's a start
-    (foldr (lambda (new acc) (cons (f new) acc)) (make-empty c) c)]
-   [(and (can-do-stateful-traversal? c)
-         (can-do-stateful-building? c))
-    (define iterator (make-iterator c))
-    (define builder  (make-builder  c))
-    (let loop ()
-      (when (has-next? iterator)
-        (add-next (f (next iterator)) builder)
-        (loop)))
-    (finalize builder)]
-   ;; TODO are the structural / stateful combinations interesting?
-   [else
-    (unless (or (can-do-structural-traversal? c)
-                (can-do-stateful-traversal? c))
-      (error "cannot traverse collection" c))
-    (unless (or (can-do-structural-building? c)
-                (can-do-stateful-building? c))
-      (error "cannot build collection" c))]))
+(define fallback-map
+  (case-lambda
+    ;; TODO worth special-casing the one collection case? that would be for
+    ;;  performance only, I guess, and performance-sensitive cases will be
+    ;;  covered by the defaults anyway
+    [(f c)
+     (cond
+      [(and (can-do-structural-traversal? c)
+            (can-do-structural-building? c))
+       ;; TODO dumb, but that's a start
+       (foldr (lambda (new acc) (cons (f new) acc)) (make-empty c) c)]
+      [(and (can-do-stateful-traversal? c)
+            (can-do-stateful-building? c))
+       (define iterator (make-iterator c))
+       (define builder  (make-builder  c))
+       (let loop ()
+         (when (has-next? iterator)
+           (add-next (f (next iterator)) builder)
+           (loop)))
+       (finalize builder)]
+      ;; TODO are the structural / stateful combinations interesting?
+      [else
+       (unless (or (can-do-structural-traversal? c)
+                   (can-do-stateful-traversal? c))
+         (error "cannot traverse collection" c))
+       (unless (or (can-do-structural-building? c)
+                   (can-do-stateful-building? c))
+         (error "cannot build collection" c))])]
+    [(f c . cs)
+     (define colls (r:cons c cs))
+     (unless (for/and ([coll (in-list colls)])
+               ;; TODO are the structural / stateful combinations interesting?
+               (or (and (can-do-structural-traversal? coll)
+                        (can-do-structural-building? coll))
+                   (and (can-do-stateful-traversal? coll)
+                        (can-do-stateful-building? coll))))
+       ;; TODO have better error message than that
+       (error "cannot traverse or build one of" colls))
+     ;; While this may look like a (premature) optimization, it's not.
+     ;; The goal is not so much to avoid checking what kind of collection
+     ;; each thing is every iteration, but rather to make sure we treat
+     ;; collections consistently throughout the traversal. If, e.g., the
+     ;; iterator for one of the statefully-traversible collections turns
+     ;; out to be structurally-traversible, we still want to iterate over
+     ;; it statefully, as we first decided. Same for the mirror case of a
+     ;; structurally-traversible collection that also happens to be an
+     ;; iterator. This may turn out to be irrelevant.
+     (define structural? (r:map can-do-structural-building? colls))
+     (define structural-building? (l:first structural?))
+     (define stateful-builder (if structural-building? #f (make-builder c)))
+     (define iterator-likes (for/list ([coll (in-list colls)]
+                                       [s?   (in-list structural?)])
+                              (if s? coll (make-iterator coll))))
+     ;; If we're building structurally, build on the way back from the end.
+     ;; If we're building statefully, build on the way to the end.
+     ;; TODO look up methods up front, if possible
+     (let loop ([its iterator-likes])
+       (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
+       (cond
+        [(r:ormap mt? its structural?) ; any empty?
+         (unless (r:andmap mt? its structural?) ; all empty?
+           (error "map: all collections must have same size"))
+         (if structural-building?
+             (make-empty c)
+             (finalize stateful-builder))]
+        [else ; keep going
+         (define args
+           (for/list ([it (in-list its)]
+                      [s? (in-list structural?)])
+             (if s? (first it) (next it))))
+         (define elt
+           (apply f args))
+         (define nexts
+           (for/list ([it (in-list its)]
+                      [s? (in-list structural?)])
+             (if s? (rest it) it))) ; already stepped
+         (cond
+          [structural-building?
+           (cons elt (loop nexts))]
+          [else ; stateful building
+           (add-next elt stateful-builder)
+           (loop nexts)])]))])) ; returns finalized builder
 
 (define (fallback-filter f c)
   (cond
@@ -241,7 +300,7 @@
   ;; TODO others
 
   ;; Transducers
-  [map f collection]
+  [map f collection . cs]
   [filter f collection]
   ;; TODO others
 
@@ -322,6 +381,9 @@
 
     (check-equal? (map add1 (kons-list '(1 2 3 4))) (kons-list '(2 3 4 5)))
     (check-equal? (filter odd? (kons-list '(1 2 3 4))) (kons-list '(1 3)))
+
+    (check-equal? (map + (kons-list '(1 2 3 4)) (kons-list '(2 3 4 5)))
+                  (kons-list '(3 5 7 9)))
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -366,6 +428,14 @@
                   (kons-list/length 4 '(2 3 4 5)))
     (check-equal? (filter odd? (kons-list/length 4 '(1 2 3 4)))
                   (kons-list/length 2 '(1 3)))
+
+    (check-equal? (map + (kons-list/length 4 '(1 2 3 4))
+                       (kons-list/length 4 '(2 3 4 5)))
+                  (kons-list/length 4 '(3 5 7 9)))
+    ;; heterogeneous case, first collection type wins
+    (check-equal? (map + (kons-list/length 4 '(1 2 3 4))
+                       (kons-list '(2 3 4 5)))
+                  (kons-list/length 4 '(3 5 7 9)))
     ))
 
 (struct not-really-a-collection ()
@@ -383,7 +453,7 @@
          (define (make-builder v)
            (vektor-builder '()))])
 
-(struct vektor-iterator (v i l) #:mutable
+(struct vektor-iterator (v i l) #:mutable #:transparent
         #:methods gen:iterator
         [(define (has-next? v)
            (< (vektor-iterator-i v) (vektor-iterator-l v)))
@@ -392,7 +462,7 @@
              (set-vektor-iterator-i! v (add1 (vektor-iterator-i v)))))])
 
 ;; Uses an intermediate list. Not sure how to do better without "size hints".
-(struct vektor-builder (l) #:mutable
+(struct vektor-builder (l) #:mutable #:transparent
         #:methods gen:builder
         [(define (add-next x v)
            (set-vektor-builder-l! v (r:cons x (vektor-builder-l v))))
@@ -420,4 +490,12 @@
 
     (check-equal? (map add1 (vektor '#(1 2 3 4))) (vektor '#(2 3 4 5)))
     (check-equal? (filter odd? (vektor '#(1 2 3 4))) (vektor '#(1 3)))
+
+    (check-equal? (map + (vektor '#(1 2 3 4))
+                       (vektor '#(2 3 4 5)))
+                  (vektor '#(3 5 7 9)))
+    ;; heterogeneous case, first collection type wins
+    (check-equal? (map + (kons-list/length 4 '(1 2 3 4))
+                       (vektor '#(2 3 4 5)))
+                  (kons-list/length 4 '(3 5 7 9)))
     ))
