@@ -2,6 +2,7 @@
 
 ;;; Interface definition (and "documentation") below.
 
+(require racket/stxparam)
 
 ;;;---------------------------------------------------------------------------
 ;;; Fallback implementations
@@ -18,6 +19,103 @@
 (define (can-do-stateful-traversal? c)
   (collection-implements? c 'make-iterator))
 
+
+(define-syntax-parameter -empty? #f)
+(define-syntax-parameter -first  #f) ; returns a list in multi-coll. case
+(define-syntax-parameter -rest   #f)
+
+(define-syntax (traversal stx)
+  (syntax-case stx ()
+    [(_ (non-coll-args ...) (loop-id extra-acc ...)
+        body-1-coll
+        body-n-colls)
+     (quasisyntax/loc stx
+       (case-lambda
+         ;; single-collection case
+         [(non-coll-args ... c)
+          (cond
+           [(can-do-structural-traversal? c)
+            (let loop-id ([acc c] extra-acc ...)
+              (syntax-parameterize
+               ([-empty?
+                 (syntax-rules () [(_) (empty? acc)])]
+                [-first
+                 (syntax-rules () [(_) (first acc)])]
+                [-rest
+                 (syntax-rules () [(_) (rest acc)])])
+               body-1-coll))]
+           [(can-do-stateful-traversal? c)
+            (let loop-id ([acc (make-iterator c)] extra-acc ...)
+              (syntax-parameterize
+               ([-empty?
+                 (syntax-rules () [(_) (not (has-next? acc))])]
+                [-first
+                 (syntax-rules () [(_) (next acc)])]
+                [-rest ; Note: only works right if -first has been called.
+                 ;; TODO then maybe have *one* syntax parameter that
+                 ;;  produces both?
+                 (syntax-rules () [(_) acc])])
+               body-1-coll))]
+           [else
+            (error "cannot traverse collection" c)])]
+         ;; n-collection case
+         [(non-coll-args ... c . cs)
+          (define colls (r:cons c cs))
+          (unless (for/and ([coll (in-list colls)])
+                    (or (can-do-structural-traversal? coll)
+                        can-do-stateful-traversal? coll))
+            ;; TODO have better error message than that
+            (error "cannot traverse one of" colls))
+          ;; While this may look like a (premature) optimization, it's not.
+          ;; The goal is not so much to avoid checking what kind of collection
+          ;; each thing is every iteration, but rather to make sure we treat
+          ;; collections consistently throughout the traversal. If, e.g., the
+          ;; iterator for one of the statefully-traversible collections turns
+          ;; out to be structurally-traversible, we still want to iterate over
+          ;; it statefully, as we first decided. Same for the mirror case of a
+          ;; structurally-traversible collection that also happens to be an
+          ;; iterator. This may turn out to be irrelevant.
+          (define structural? (r:map can-do-structural-building? colls))
+          (define iterator-likes (for/list ([coll (in-list colls)]
+                                            [s?   (in-list structural?)])
+                                   (if s? coll (make-iterator coll))))
+          (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
+          ;; TODO look up methods up front, if possible
+          (let loop-id ([its iterator-likes] extra-acc ...)
+            (syntax-parameterize
+             ([-empty?
+               (syntax-rules ()
+                 [(_)
+                  (and (r:ormap mt? its structural?) ; any empty?
+                       (or (r:andmap mt? its structural?) ; all empty?
+                           (error "all collections must have same size")))])]
+              [-first
+               (syntax-rules ()
+                 [(_)
+                  (for/list ([it (in-list its)]
+                             [s? (in-list structural?)])
+                    (if s? (first it) (next it)))])]
+              [-rest
+               (syntax-rules ()
+                 [(_)
+                  (for/list ([it (in-list its)]
+                             [s? (in-list structural?)])
+                    (if s? (rest it) it))])]) ; already stepped
+             body-n-colls))]))]))
+;; TODO allow clients to only have 1 collection case, too
+;; TODO implement transducer using traversal?
+
+(define fallback-foldr
+  (traversal
+   (f base) (loop)
+   (if (-empty?)
+       base
+       (f (-first) (loop (-rest))))
+   (if (-empty?)
+       base
+       ;; TODO can I do it without the append?
+       (apply f (r:append (-first) (list (loop (-rest))))))))
+
 (define (fallback-length c)
   (cond
    [(can-do-structural-traversal? c)
@@ -31,21 +129,6 @@
           (begin (next it)
                  (loop (add1 n)))
           n))]
-   [else
-    (error "cannot traverse collection" c)]))
-
-(define (fallback-foldr f b c)
-  (cond
-   [(can-do-structural-traversal? c)
-    (if (empty? c)
-        b
-        (f (first c) (foldr f b (rest c))))]
-   [(can-do-stateful-traversal? c)
-    (define it (make-iterator c))
-    (let loop ([acc b])
-      (if (has-next? it)
-          (f (next it) (loop acc))
-          acc))]
    [else
     (error "cannot traverse collection" c)]))
 
@@ -194,7 +277,7 @@
        (cond
         [(r:ormap mt? its structural?) ; any empty?
          (unless (r:andmap mt? its structural?) ; all empty?
-           (error "map: all collections must have same size"))
+           (error "all collections must have same size"))
          (if structural-building?
              (make-empty c)
              (finalize stateful-builder))]
@@ -272,7 +355,7 @@
   
   ;; Derived traversals
   [length collection]
-  [foldr f base collection]
+  [foldr f base collection . cs]
   [foldl f base collection]
   ;; TODO others
 
@@ -437,6 +520,12 @@
     (check-equal? (map + (kons-list/length 4 '(1 2 3 4))
                        (kons-list '(2 3 4 5)))
                   (kons-list/length 4 '(3 5 7 9)))
+
+    (check-equal? (foldr list 'x
+                         (range (kons-list '()) 3)
+                         (kons-list '(5 6 7))
+                         (kons-list '(11 12 13)))
+                  '(0 5 11 (1 6 12 (2 7 13 x))))
     ))
 
 (struct not-really-a-collection ()
@@ -499,4 +588,11 @@
     (check-equal? (map + (kons-list/length 4 '(1 2 3 4))
                        (vektor '#(2 3 4 5)))
                   (kons-list/length 4 '(3 5 7 9)))
+
+    (check-equal? (foldr list 'x
+                         (range (vektor '#()) 3)
+                         (kons-list '(5 6 7))
+                         (vektor '#(11 12 13)))
+                  '(0 5 11 (1 6 12 (2 7 13 x))))
+
     ))
