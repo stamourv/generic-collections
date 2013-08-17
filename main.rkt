@@ -21,8 +21,14 @@
 
 
 (define-syntax-parameter -empty? #f)
-(define-syntax-parameter -first  #f) ; returns a list in multi-coll. case
+;; returns a list in multi-coll. case
+(define-syntax-parameter -first  #f)
+;; To be passed back to the loop.
+;; Note: only works right if `-first' has been called.
 (define-syntax-parameter -rest   #f)
+;; Get the rest, works only if `-first' has *not* been called.
+(define-syntax-parameter -rest!  #f)
+
 
 (define-syntax (traversal stx)
   (syntax-case stx ()
@@ -42,6 +48,8 @@
                 [-first
                  (syntax-rules () [(_) (first acc)])]
                 [-rest
+                 (syntax-rules () [(_) (rest acc)])]
+                [-rest!
                  (syntax-rules () [(_) (rest acc)])])
                body-1-coll))]
            [(can-do-stateful-traversal? c)
@@ -51,10 +59,10 @@
                  (syntax-rules () [(_) (not (has-next? acc))])]
                 [-first
                  (syntax-rules () [(_) (next acc)])]
-                [-rest ; Note: only works right if -first has been called.
-                 ;; TODO then maybe have *one* syntax parameter that
-                 ;;  produces both?
-                 (syntax-rules () [(_) acc])])
+                [-rest
+                 (syntax-rules () [(_) acc])]
+                [-rest!
+                 (syntax-rules () [(_) (begin (next acc) acc)])])
                body-1-coll))]
            [else
             (error "cannot traverse collection" c)])]
@@ -102,7 +110,6 @@
                              [s? (in-list structural?)])
                     (if s? (rest it) it))])]) ; already stepped
              body-n-colls))]))]))
-;; TODO allow clients to only have 1 collection case, too
 ;; TODO implement transducer using traversal?
 
 (define fallback-foldr
@@ -116,36 +123,24 @@
        ;; TODO can I do it without the append?
        (apply f (r:append (-first) (list (loop (-rest))))))))
 
-(define (fallback-length c)
-  (cond
-   [(can-do-structural-traversal? c)
-    (if (empty? c)
-        0
-        (add1 (length (rest c))))]
-   [(can-do-stateful-traversal? c)
-    (define it (make-iterator c))
-    (let loop ([n 0])
-      (if (has-next? it)
-          (begin (next it)
-                 (loop (add1 n)))
-          n))]
-   [else
-    (error "cannot traverse collection" c)]))
+(define fallback-length
+  (traversal
+   () (loop [n 0])
+   (if (-empty?)
+       n
+       (loop (-rest!) (add1 n)))
+   #f)) ;; TODO allow clients to only have 1 collection case
 
-(define (fallback-foldl f b c)
-  (cond
-   [(can-do-structural-traversal? c)
-    (if (empty? c)
-        b
-        (foldl f (f (first c) b) (rest c)))]
-   [(can-do-stateful-traversal? c)
-    (define it (make-iterator c))
-    (let loop ([acc b])
-      (if (has-next? it)
-          (loop (f (next it) acc))
-          acc))]
-   [else
-    (error "cannot traverse collection" c)]))
+(define fallback-foldl
+  (traversal
+   (f base) (loop [acc base])
+   (if (-empty?)
+       acc
+       (loop (-rest) (f (-first) acc)))
+   (if (-empty?)
+       acc
+       ;; TODO can I do it without the append?
+       (loop (-rest) (apply f (r:append (-first) (list acc)))))))
 
 (define (can-do-structural-building? c)
   (and (collection-implements? c 'make-empty)
@@ -356,7 +351,7 @@
   ;; Derived traversals
   [length collection]
   [foldr f base collection . cs]
-  [foldl f base collection]
+  [foldl f base collection . cs]
   ;; TODO others
 
   ;; Structural building
@@ -468,6 +463,17 @@
                (lambda ()
                  (filter (lambda (x y) (< 5 (+ x y)))
                          (kons-list '(1 2 3 4)) (kons-list '(2 3 4 5)))))
+
+    (check-equal? (foldr list 'x
+                         (range (kons-list '()) 3)
+                         (kons-list '(5 6 7))
+                         (kons-list '(11 12 13)))
+                  '(0 5 11 (1 6 12 (2 7 13 x))))
+    (check-equal? (foldl list 'x
+                         (range (kons-list '()) 3)
+                         (kons-list '(5 6 7))
+                         (kons-list '(11 12 13)))
+                  '(2 7 13 (1 6 12 (0 5 11 x))))
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -487,7 +493,7 @@
          ;; overrides
          (define (length k)
            (kons-list/length-l k))
-         (define (foldl f b k)
+         (define (foldl f b k . cs)
            'dummy)])
 
 (module+ test
@@ -520,12 +526,6 @@
     (check-equal? (map + (kons-list/length 4 '(1 2 3 4))
                        (kons-list '(2 3 4 5)))
                   (kons-list/length 4 '(3 5 7 9)))
-
-    (check-equal? (foldr list 'x
-                         (range (kons-list '()) 3)
-                         (kons-list '(5 6 7))
-                         (kons-list '(11 12 13)))
-                  '(0 5 11 (1 6 12 (2 7 13 x))))
     ))
 
 (struct not-really-a-collection ()
@@ -594,5 +594,9 @@
                          (kons-list '(5 6 7))
                          (vektor '#(11 12 13)))
                   '(0 5 11 (1 6 12 (2 7 13 x))))
-
+    (check-equal? (foldl list 'x
+                         (range (vektor '#()) 3)
+                         (kons-list '(5 6 7))
+                         (vektor '#(11 12 13)))
+                  '(2 7 13 (1 6 12 (0 5 11 x))))
     ))
