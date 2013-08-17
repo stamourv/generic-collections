@@ -228,12 +228,11 @@
                    acc))
               ((when (f elt)
                  (add-next elt builder)))
-              ;; TODO does n-ary filter even make sense?
-              ((if (apply f elts)
-                   (cons (l:first elts) acc)
-                   acc))
-              ((when (apply f elts)
-                 (add-next (l:first elts) builder)))))
+              ;; TODO the n-ary template is still generated, but can't run
+              ;;  (the generic function raises an arity error before we even
+              ;;  get here)
+              (#f)
+              (#f)))
 
 
 ;;;---------------------------------------------------------------------------
@@ -299,7 +298,7 @@
 
   ;; Transducers
   [map f collection . cs]
-  [filter f collection . cs]
+  [filter f collection]
   ;; TODO others
 
   #:defined-predicate collection-implements?
@@ -382,9 +381,10 @@
 
     (check-equal? (map + (kons-list '(1 2 3 4)) (kons-list '(2 3 4 5)))
                   (kons-list '(3 5 7 9)))
-    (check-equal? (filter (lambda (x y) (< 5 (+ x y)))
-                          (kons-list '(1 2 3 4)) (kons-list '(2 3 4 5)))
-                  (kons-list '(3 4)))
+    (check-exn exn:fail:contract:arity?
+               (lambda ()
+                 (filter (lambda (x y) (< 5 (+ x y)))
+                         (kons-list '(1 2 3 4)) (kons-list '(2 3 4 5)))))
     ))
 
 (struct kons-list/length (l elts) #:transparent
