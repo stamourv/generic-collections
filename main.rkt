@@ -122,26 +122,37 @@
    [else
     (error "cannot build collection" c)]))
 
-(define fallback-map
+
+;; This abstracts over the pattern of traversing over n collections, each
+;; either structural or stateful, and building a new collection of the same
+;; type as the first collection argument, either structurally or statefully.
+;; TODO is the 1-coll special case worth it? pretty ugly
+(define-syntax-rule (transducer (non-coll-args ...)
+                                (elt elts acc stateful-builder)
+                                (structural-body-1-coll)
+                                (stateful-body-1-coll)
+                                (structural-body-n-coll)
+                                (stateful-body-n-coll))
   (case-lambda
     ;; TODO worth special-casing the one collection case? that would be for
     ;;  performance only, I guess, and performance-sensitive cases will be
     ;;  covered by the defaults anyway
-    [(f c)
+    [(non-coll-args ... c)
      (cond
       [(and (can-do-structural-traversal? c)
             (can-do-structural-building? c))
        ;; TODO dumb, but that's a start
-       (foldr (lambda (new acc) (cons (f new) acc)) (make-empty c) c)]
+       (foldr (lambda (elt acc) structural-body-1-coll) (make-empty c) c)]
       [(and (can-do-stateful-traversal? c)
             (can-do-stateful-building? c))
-       (define iterator (make-iterator c))
-       (define builder  (make-builder  c))
+       (define iterator         (make-iterator c))
+       (define stateful-builder (make-builder  c))
        (let loop ()
          (when (has-next? iterator)
-           (add-next (f (next iterator)) builder)
+           (define elt (next iterator))
+           stateful-body-1-coll
            (loop)))
-       (finalize builder)]
+       (finalize stateful-builder)]
       ;; TODO are the structural / stateful combinations interesting?
       [else
        (unless (or (can-do-structural-traversal? c)
@@ -150,7 +161,7 @@
        (unless (or (can-do-structural-building? c)
                    (can-do-stateful-building? c))
          (error "cannot build collection" c))])]
-    [(f c . cs)
+    [(non-coll-args ... c . cs)
      (define colls (r:cons c cs))
      (unless (for/and ([coll (in-list colls)])
                ;; TODO are the structural / stateful combinations interesting?
@@ -188,54 +199,41 @@
              (make-empty c)
              (finalize stateful-builder))]
         [else ; keep going
-         (define args
+         (define elts
            (for/list ([it (in-list its)]
                       [s? (in-list structural?)])
              (if s? (first it) (next it))))
-         (define elt
-           (apply f args))
          (define nexts
            (for/list ([it (in-list its)]
                       [s? (in-list structural?)])
              (if s? (rest it) it))) ; already stepped
          (cond
           [structural-building?
-           (cons elt (loop nexts))]
+           (define acc (loop nexts))
+           structural-body-n-coll]
           [else ; stateful building
-           (add-next elt stateful-builder)
+           stateful-body-n-coll
            (loop nexts)])]))])) ; returns finalized builder
 
-(define (fallback-filter f c)
-  (cond
-   [(and (can-do-structural-traversal? c)
-         (can-do-structural-building? c))
-    ;; TODO dumb, but that's a start
-    (foldr (lambda (new acc)
-             (if (f new)
-                 (cons new acc)
-                 acc))
-           (make-empty c)
-           c)]
-   [(and (can-do-stateful-traversal? c)
-         (can-do-stateful-building? c))
-    (define iterator (make-iterator c))
-    (define builder  (make-builder  c))
-    (let loop ()
-      (when (has-next? iterator)
-        (define n (next iterator))
-        (when (f n)
-          (add-next n builder))
-        (loop)))
-    (finalize builder)]
-   ;; TODO are the structural / stateful combinations interesting?
-   [else
-    (unless (or (can-do-structural-traversal? c)
-                (can-do-stateful-traversal? c))
-      (error "cannot traverse collection" c))
-    (unless (or (can-do-structural-building? c)
-                (can-do-stateful-building? c))
-      (error "cannot build collection" c))]))
-
+(define fallback-map
+  (transducer (f) (elt elts acc builder)
+              ((cons (f elt) acc))
+              ((add-next (f elt) builder))
+              ((cons (apply f elts) acc))
+              ((add-next (apply f elts) builder))))
+(define fallback-filter
+  (transducer (f) (elt elts acc builder)
+              ((if (f elt)
+                   (cons elt acc)
+                   acc))
+              ((when (f elt)
+                 (add-next elt builder)))
+              ;; TODO does n-ary filter even make sense?
+              ((if (apply f elts)
+                   (cons (l:first elts) acc)
+                   acc))
+              ((when (apply f elts)
+                 (add-next (l:first elts) builder)))))
 
 
 ;;;---------------------------------------------------------------------------
@@ -301,7 +299,7 @@
 
   ;; Transducers
   [map f collection . cs]
-  [filter f collection]
+  [filter f collection . cs]
   ;; TODO others
 
   #:defined-predicate collection-implements?
@@ -384,6 +382,9 @@
 
     (check-equal? (map + (kons-list '(1 2 3 4)) (kons-list '(2 3 4 5)))
                   (kons-list '(3 5 7 9)))
+    (check-equal? (filter (lambda (x y) (< 5 (+ x y)))
+                          (kons-list '(1 2 3 4)) (kons-list '(2 3 4 5)))
+                  (kons-list '(3 4)))
     ))
 
 (struct kons-list/length (l elts) #:transparent
