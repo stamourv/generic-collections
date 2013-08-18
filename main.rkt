@@ -31,6 +31,40 @@
 (define-syntax-parameter -rest!  (syntax-rules ()))
 
 
+(define-syntax-rule (with-structural-traversal-parameters (loop acc) body)
+  (syntax-parameterize
+   ([-loop
+     (make-rename-transformer #'loop)]
+    [-empty?
+     (syntax-rules () [(_) (empty? acc)])]
+    [-first
+     (syntax-rules () [(_) (first acc)])]
+    [-rest
+     (syntax-rules () [(_) (rest acc)])]
+    [-rest!
+     (syntax-rules () [(_) (rest acc)])])
+   body))
+
+(define-syntax-rule (with-stateful-traversal-parameters (loop acc) body)
+  (syntax-parameterize
+   ([-loop
+     (...
+      (syntax-rules ()
+        [(_ in extra-arg ...)
+         ;; No need to pass acc around, but can't drop it either (can be
+         ;; side-effectful, like `-rest!'). If it's just `-rest', should be
+         ;; compiled away anyway.
+         (begin in (loop extra-arg ...))]))]
+    [-empty?
+     (syntax-rules () [(_) (not (has-next? acc))])]
+    [-first
+     (syntax-rules () [(_) (next acc)])]
+    [-rest
+     (syntax-rules () [(_) acc])]
+    [-rest!
+     (syntax-rules () [(_) (begin (next acc) acc)])])
+   body))
+
 (define-syntax (traversal stx)
   (syntax-case stx ()
     [(_ (non-coll-args ...) (extra-acc ...)
@@ -43,38 +77,14 @@
             (cond
              [(can-do-structural-traversal? c)
               (let loop ([acc c] extra-acc ...)
-                (syntax-parameterize
-                 ([-loop
-                   (make-rename-transformer #'loop)]
-                  [-empty?
-                   (syntax-rules () [(_) (empty? acc)])]
-                  [-first
-                   (syntax-rules () [(_) (first acc)])]
-                  [-rest
-                   (syntax-rules () [(_) (rest acc)])]
-                  [-rest!
-                   (syntax-rules () [(_) (rest acc)])])
+                (with-structural-traversal-parameters
+                 (loop acc)
                  body-1-coll))]
              [(can-do-stateful-traversal? c)
               (let ([acc (make-iterator c)])
                 (let loop (extra-acc ...)
-                  (syntax-parameterize
-                   ([-loop
-                     (...
-                      (syntax-rules ()
-                        [(_ in extra-arg ...)
-                         ;; No need to pass acc around, but can't drop it
-                         ;; either (can be side-effectful, like `-rest!').
-                         ;; If it's just `-rest', should be compiled away.
-                         (begin in (loop extra-arg ...))]))]
-                    [-empty?
-                     (syntax-rules () [(_) (not (has-next? acc))])]
-                    [-first
-                     (syntax-rules () [(_) (next acc)])]
-                    [-rest
-                     (syntax-rules () [(_) acc])]
-                    [-rest!
-                     (syntax-rules () [(_) (begin (next acc) acc)])])
+                  (with-stateful-traversal-parameters
+                   (loop acc)
                    body-1-coll)))]
              [else
               (error "cannot traverse collection" c)]))))
@@ -234,9 +244,6 @@
 
 (define-syntax-parameter -base (syntax-rules ()))
 
-;; TODO abstract out parts common with traversal
-;;   to do this, probably have some `with-traversal-syntax-parameterize'
-;;   and same for builder that take, say, to local loop var ids as args
 (define-syntax (transducer stx)
   (syntax-case stx ()
     [(_ (non-coll-args ...)
@@ -256,17 +263,8 @@
                ([-base
                  (syntax-rules () [(_) (make-empty c)])])
                (let loop ([acc c] extra-acc-structural ...)
-                 (syntax-parameterize
-                  ([-loop
-                    (make-rename-transformer #'loop)]
-                   [-empty?
-                    (syntax-rules () [(_) (empty? acc)])]
-                   [-first
-                    (syntax-rules () [(_) (first acc)])]
-                   [-rest
-                    (syntax-rules () [(_) (rest acc)])]
-                   [-rest!
-                    (syntax-rules () [(_) (rest acc)])])
+                 (with-structural-traversal-parameters
+                  (loop acc)
                   body-1-coll-structural)))]
              [(and (can-do-stateful-traversal? c)
                    (can-do-stateful-building? c))
@@ -276,23 +274,8 @@
                    (syntax-rules () [(_) builder])])
                  (begin
                    (let loop (extra-acc-stateful ...)
-                     (syntax-parameterize
-                      ([-loop
-                        (...
-                         (syntax-rules ()
-                           [(_ in extra-arg ...)
-                            ;; No need to pass acc around, but can't drop it
-                            ;; either (can be side-effectful, like `-rest!').
-                            ;; If it's just `-rest', should be compiled away.
-                            (begin in (loop extra-arg ...))]))]
-                       [-empty?
-                        (syntax-rules () [(_) (not (has-next? acc))])]
-                       [-first
-                        (syntax-rules () [(_) (next acc)])]
-                       [-rest
-                        (syntax-rules () [(_) acc])]
-                       [-rest!
-                        (syntax-rules () [(_) (begin (next acc) acc)])])
+                     (with-stateful-traversal-parameters
+                      (loop acc)
                       body-1-coll-stateful))
                    (finalize builder))))]
              [else
@@ -336,8 +319,6 @@
             (define stateful-builder
               (if structural-building? #f (make-builder c)))
 
-            ;; TODO this loop unswitching (which is actually necessary) really
-            ;;  makes me wish for `with-traversal-syntax-parameterize'
             #,(let ()
                 (define (wrap body extra-acc-list)
                   (quasisyntax/loc stx
