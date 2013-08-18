@@ -206,59 +206,68 @@
 (define (can-do-stateful-building? c)
   (collection-implements? c 'make-builder))
 
-(define (fallback-range c n)
-  (cond
-   [(can-do-structural-building? c)
-    (let loop ([n (sub1 n)] [acc (make-empty c)])
-      (if (< n 0)
-          acc
-          (loop (sub1 n) (cons n acc))))]
-   [(can-do-stateful-building? c)
-    (define builder (make-builder c))
-    (let loop ([i 0])
-      (when (< i n)
-        (add-next i builder)
-        (loop (add1 i))))
-    (finalize builder)]
-   [else
-    (error "cannot build collection" c)]))
-
-(define (fallback-make c n v)
-  (cond
-   [(can-do-structural-building? c)
-    (let loop ([n n] [acc (make-empty c)])
-      (if (= n 0)
-          acc
-          (loop (sub1 n) (cons v acc))))]
-   [(can-do-stateful-building? c)
-    (define builder (make-builder c))
-    (let loop ([i 0])
-      (when (< i n)
-        (add-next v builder)
-        (loop (add1 i))))
-    (finalize builder)]
-   [else
-    (error "cannot build collection" c)]))
-
-(define (fallback-build c n f)
-  (cond
-   [(can-do-structural-building? c)
-    (let loop ([n (sub1 n)] [acc (make-empty c)])
-      (if (< n 0)
-          acc
-          (loop (sub1 n) (cons (f n) acc))))]
-   [(can-do-stateful-building? c)
-    (define builder (make-builder c))
-    (let loop ([i 0])
-      (when (< i n)
-        (add-next (f i) builder)
-        (loop (add1 i))))
-    (finalize builder)]
-   [else
-    (error "cannot build collection" c)]))
-
 
 (define-syntax-parameter -base (syntax-rules ()))
+
+(define-syntax (building stx)
+  (syntax-case stx ()
+    [(_ (non-coll-args ...)
+        (extra-acc-structural ...) (extra-acc-stateful ...)
+        body-structural
+        body-stateful)
+     (quasisyntax/loc stx
+       (lambda (c non-coll-args ...)
+         (cond
+          [(can-do-structural-building? c)
+           (syntax-parameterize
+            ([-base (syntax-rules () [(_) (make-empty c)])])
+            (let loop (extra-acc-structural ...)
+              (syntax-parameterize
+               ([-loop (make-rename-transformer #'loop)])
+               body-structural)))]
+          [(can-do-stateful-building? c)
+           (let ([builder (make-builder c)])
+             (syntax-parameterize
+              ([-base (syntax-rules () [(_) builder])])
+              (begin
+                (let loop (extra-acc-stateful ...)
+                  (syntax-parameterize
+                   ([-loop (make-rename-transformer #'loop)])
+                   body-stateful))
+                (finalize builder))))]
+          [else
+           (error "cannot build collection" c)])))]))
+
+(define fallback-range
+  (building
+   (n) ([i (sub1 n)] [acc (-base)]) ([i 0])
+   (if (< i 0)
+       acc
+       (-loop (sub1 i) (cons i acc)))
+   (when (< i n)
+     (add-next i (-base))
+     (-loop (add1 i)))))
+
+(define fallback-make
+  (building
+   (n v) ([i n] [acc (-base)]) ([i 0])
+   (if (= i 0)
+       acc
+       (-loop (sub1 i) (cons v acc)))
+   (when (< i n)
+     (add-next v (-base))
+     (-loop (add1 i)))))
+
+(define fallback-build
+  (building
+   (n f) ([i (sub1 n)] [acc (-base)]) ([i 0])
+   (if (< i 0)
+       acc
+       (-loop (sub1 i) (cons (f i) acc)))
+   (when (< i n)
+     (add-next (f i) (-base))
+     (-loop (add1 i)))))
+
 
 (define-syntax (transducer stx)
   (syntax-case stx ()
