@@ -239,7 +239,8 @@
 ;;   and same for builder that take, say, to local loop var ids as args
 (define-syntax (transducer stx)
   (syntax-case stx ()
-    [(_ (non-coll-args ...) (extra-acc ...)
+    [(_ (non-coll-args ...)
+        (extra-acc-structural ...) (extra-acc-stateful ...)
         body-1-coll-structural
         body-1-coll-stateful
         body-n-colls-structural
@@ -254,7 +255,7 @@
               (syntax-parameterize
                ([-base
                  (syntax-rules () [(_) (make-empty c)])])
-               (let loop ([acc c] extra-acc ...)
+               (let loop ([acc c] extra-acc-structural ...)
                  (syntax-parameterize
                   ([-loop
                     (make-rename-transformer #'loop)]
@@ -274,7 +275,7 @@
                  ([-base
                    (syntax-rules () [(_) builder])])
                  (begin
-                   (let loop (extra-acc ...)
+                   (let loop (extra-acc-stateful ...)
                      (syntax-parameterize
                       ([-loop
                         (...
@@ -338,7 +339,7 @@
             ;; TODO this loop unswitching (which is actually necessary) really
             ;;  makes me wish for `with-traversal-syntax-parameterize'
             #,(let ()
-                (define (wrap body)
+                (define (wrap body extra-acc-list)
                   (quasisyntax/loc stx
                     (syntax-parameterize
                      ([-base
@@ -347,7 +348,7 @@
                           (if structural-building?
                               (make-empty c)
                               stateful-builder)])])
-                     (let loop ([its iterator-likes] extra-acc ...)
+                     (let loop ([its iterator-likes] #,@extra-acc-list)
                        (syntax-parameterize
                         ([-loop
                           (make-rename-transformer #'loop)]
@@ -372,8 +373,10 @@
                         #,body)))))
                 (quasisyntax/loc stx
                   (if structural-building?
-                      #,(wrap #'body-n-colls-structural)
-                      (begin #,(wrap #'body-n-colls-stateful)
+                      #,(wrap #'body-n-colls-structural
+                              #'(extra-acc-structural ...))
+                      (begin #,(wrap #'body-n-colls-stateful
+                                     #'(extra-acc-stateful ...))
                              (finalize stateful-builder))))))))
 
        (cond
@@ -397,7 +400,7 @@
 
 (define fallback-map
   (transducer
-   (f) ()
+   (f) () ()
    (if (-empty?)
        (-base)
        (cons (f (-first)) (-loop (-rest))))
@@ -415,7 +418,7 @@
 
 (define fallback-filter
   (transducer
-   (f) ()
+   (f) () ()
    (if (-empty?)
        (-base)
        (let ([elt (-first)])
@@ -433,7 +436,7 @@
 
 (define fallback-reverse
   (transducer
-   () ([acc (-base)])
+   () ([acc (-base)]) ()
    (if (-empty?)
        acc
        (-loop (-rest) (cons (-first) acc)))
@@ -441,8 +444,7 @@
        'done
        (let ([elt (-first)])
          (define res
-           (begin0 (-loop (-rest) (-base)) ; extraneous arg, but oh well.
-             ;; TODO maybe separate sets of accs for structural and stateful?
+           (begin0 (-loop (-rest))
            (add-next elt (-base))))
          res))
    #f
