@@ -455,7 +455,7 @@
   ;;  need something to dispatch on. maybe also offer monomorphic versions
   ;;  OR have collection be an opt/kw arg and default to lists
   ;;  OR have the option to pass in empty (or maybe make-empty) and cons
-  [range collection n] ; TODO extend to fall API, with opt args
+  [range collection n] ; TODO extend to full API, with opt args
   [make  collection n v] ; think make-list
   [build collection n f] ; think build-list
   ;; TODO unfold
