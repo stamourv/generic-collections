@@ -238,14 +238,17 @@
            (error "cannot build collection" c)])))]))
 
 (define fallback-range
-  (building
-   (n) ([i (sub1 n)] [acc (-base)]) ([i 0])
-   (if (< i 0)
-       acc
-       (-loop (sub1 i) (cons i acc)))
-   (when (< i n)
-     (add-next i (-base))
-     (-loop (add1 i)))))
+  (case-lambda
+    [(c end)
+     ;; Use the fallback so that clients of range don't have to know
+     ;; whether build was overriden.
+     (fallback-build c end values)]
+    [(c start end)
+     (fallback-build c (- end start) (lambda (x) (+ x start)))]
+    [(c start end step)
+     (fallback-build c
+                     (exact-ceiling (/ (- end start) step))
+                     (lambda (x) (+ (* x step) start)))]))
 
 (define fallback-make
   (building
@@ -455,7 +458,7 @@
   ;;  need something to dispatch on. maybe also offer monomorphic versions
   ;;  OR have collection be an opt/kw arg and default to lists
   ;;  OR have the option to pass in empty (or maybe make-empty) and cons
-  [range collection n] ; TODO extend to full API, with opt args
+  [range collection x [y] [z]]
   [make  collection n v] ; think make-list
   [build collection n f] ; think build-list
   ;; TODO unfold
@@ -585,6 +588,28 @@
     (check-equal? (reverse (kons-list '(1 2 3))) (kons-list '(3 2 1)))
     (check-equal? (n-ary-reverse (kons-list '(1 2 3)) (kons-list '(4 5 6)))
                   (kons-list '((3 6) (2 5) (1 4))))
+
+    ;; taken from range's test suite
+    (check-equal? (range mt 4) (kons-list '(0 1 2 3)))
+    (check-equal? (range mt 0) (kons-list '()))
+    (check-equal? (range mt 8) (kons-list '(0 1 2 3 4 5 6 7)))
+    (check-equal? (range mt 3 2) (kons-list '()))
+    (check-equal? (range mt 3 2 -1) (kons-list '(3)))
+    (check-equal? (range mt 3 9) (kons-list '(3 4 5 6 7 8)))
+    (check-equal? (range mt 3 9 2) (kons-list '(3 5 7)))
+    (check-equal? (range mt 3 9 0.5)
+                  (kons-list '(3 3.5 4.0 4.5 5.0 5.5 6.0 6.5 7.0 7.5 8.0 8.5)))
+    (check-equal? (range mt 9 3 -2) (kons-list '(9 7 5)))
+    (check-equal? (range mt 10) (kons-list '(0 1 2 3 4 5 6 7 8 9)))
+    (check-equal? (range mt 10 20)
+                  (kons-list '(10 11 12 13 14 15 16 17 18 19)))
+    (check-equal? (range mt 20 40 2)
+                  (kons-list '(20 22 24 26 28 30 32 34 36 38)))
+    (check-equal? (range mt 20 10 -1)
+                  (kons-list '(20 19 18 17 16 15 14 13 12 11)))
+    (check-equal? (range mt 10 15 1.5)
+                  (kons-list '(10 11.5 13.0 14.5)))
+
     ))
 
 (struct kons-list/length (l elts) #:transparent
