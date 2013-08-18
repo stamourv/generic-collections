@@ -232,116 +232,187 @@
     (error "cannot build collection" c)]))
 
 
-;; This abstracts over the pattern of traversing over n collections, each
-;; either structural or stateful, and building a new collection of the same
-;; type as the first collection argument, either structurally or statefully.
-;; TODO is the 1-coll special case worth it? pretty ugly
-(define-syntax-rule (transducer (non-coll-args ...)
-                                (elt elts acc stateful-builder)
-                                (structural-body-1-coll)
-                                (stateful-body-1-coll)
-                                (structural-body-n-coll)
-                                (stateful-body-n-coll))
-  (case-lambda
-    ;; TODO worth special-casing the one collection case? that would be for
-    ;;  performance only, I guess, and performance-sensitive cases will be
-    ;;  covered by the defaults anyway
-    [(non-coll-args ... c)
-     (cond
-      [(and (can-do-structural-traversal? c)
-            (can-do-structural-building? c))
-       ;; TODO dumb, but that's a start
-       (foldr (lambda (elt acc) structural-body-1-coll) (make-empty c) c)]
-      [(and (can-do-stateful-traversal? c)
-            (can-do-stateful-building? c))
-       (define iterator         (make-iterator c))
-       (define stateful-builder (make-builder  c))
-       (let loop ()
-         (when (has-next? iterator)
-           (define elt (next iterator))
-           stateful-body-1-coll
-           (loop)))
-       (finalize stateful-builder)]
-      ;; TODO are the structural / stateful combinations interesting?
-      [else
-       (unless (or (can-do-structural-traversal? c)
-                   (can-do-stateful-traversal? c))
-         (error "cannot traverse collection" c))
-       (unless (or (can-do-structural-building? c)
+(define-syntax-parameter -cons (syntax-rules ()))
+(define-syntax-parameter -done (syntax-rules ()))
+
+;; If we're building structurally, build on the way back from the end.
+;; If we're building statefully, build on the way to the end.
+;; TODO abstract out parts common with traversal
+(define-syntax (transducer stx)
+  (syntax-case stx ()
+    [(_ (non-coll-args ...) (extra-acc ...)
+        body-1-coll
+        body-n-colls)
+     (let ()
+       (define single-collection-part ; just missing the `lambda'
+         (syntax/loc stx
+           ((non-coll-args ... c)
+            (cond
+             [(and (can-do-structural-traversal? c)
+                   (can-do-structural-building? c))
+              (let loop ([acc c] extra-acc ...)
+                (syntax-parameterize
+                 ([-loop
+                   (make-rename-transformer #'loop)]
+                  [-empty?
+                   (syntax-rules () [(_) (empty? acc)])]
+                  [-first
+                   (syntax-rules () [(_) (first acc)])]
+                  [-rest
+                   (syntax-rules () [(_) (rest acc)])]
+                  [-rest!
+                   (syntax-rules () [(_) (rest acc)])]
+                  [-cons
+                   (syntax-rules () [(_ x xs) (cons x xs)])]
+                  [-done
+                   (syntax-rules () [(_) (make-empty c)])])
+                 body-1-coll))]
+             [(and (can-do-stateful-traversal? c)
                    (can-do-stateful-building? c))
-         (error "cannot build collection" c))])]
-    [(non-coll-args ... c . cs)
-     (define colls (r:cons c cs))
-     (unless (for/and ([coll (in-list colls)])
-               ;; TODO are the structural / stateful combinations interesting?
-               (or (and (can-do-structural-traversal? coll)
-                        (can-do-structural-building? coll))
-                   (and (can-do-stateful-traversal? coll)
-                        (can-do-stateful-building? coll))))
-       ;; TODO have better error message than that
-       (error "cannot traverse or build one of" colls))
-     ;; While this may look like a (premature) optimization, it's not.
-     ;; The goal is not so much to avoid checking what kind of collection
-     ;; each thing is every iteration, but rather to make sure we treat
-     ;; collections consistently throughout the traversal. If, e.g., the
-     ;; iterator for one of the statefully-traversible collections turns
-     ;; out to be structurally-traversible, we still want to iterate over
-     ;; it statefully, as we first decided. Same for the mirror case of a
-     ;; structurally-traversible collection that also happens to be an
-     ;; iterator. This may turn out to be irrelevant.
-     (define structural? (r:map can-do-structural-building? colls))
-     (define structural-building? (l:first structural?))
-     (define stateful-builder (if structural-building? #f (make-builder c)))
-     (define iterator-likes (for/list ([coll (in-list colls)]
-                                       [s?   (in-list structural?)])
-                              (if s? coll (make-iterator coll))))
-     ;; If we're building structurally, build on the way back from the end.
-     ;; If we're building statefully, build on the way to the end.
-     ;; TODO look up methods up front, if possible
-     (let loop ([its iterator-likes])
-       (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
+              (let ([acc (make-iterator c)] [builder (make-builder c)])
+                (let loop (extra-acc ...)
+                  (syntax-parameterize
+                   ([-loop
+                     (...
+                      (syntax-rules ()
+                        [(_ in extra-arg ...)
+                         ;; No need to pass acc around, but can't drop it
+                         ;; either (can be side-effectful, like `-rest!').
+                         ;; If it's just `-rest', should be compiled away.
+                         (begin in (loop extra-arg ...))]))]
+                    [-empty?
+                     (syntax-rules () [(_) (not (has-next? acc))])]
+                    [-first
+                     (syntax-rules () [(_) (next acc)])]
+                    [-rest
+                     (syntax-rules () [(_) acc])]
+                    [-rest!
+                     (syntax-rules () [(_) (begin (next acc) acc)])]
+                    [-cons
+                     ;; Since adding an element is stateful, sequence adding
+                     ;; and recurring.
+                     ;; TODO will this pattern work for `reverse'?
+                     ;;   probably, `-cons' will just be in accumulator position.
+                     ;;   also test a n-ary reverse-like thing (reverse itself
+                     ;;   makes no sense n-ary)
+                     (syntax-rules () [(_ x xs) (begin (add-next x builder)
+                                                       xs)])]
+                    [-done
+                     (syntax-rules () [(_) (finalize builder)])])
+                   body-1-coll)))]
+             [else
+              ;; TODO are the structural / stateful combinations interesting?
+              (unless (or (can-do-structural-traversal? c)
+                          (can-do-stateful-traversal? c))
+                (error "cannot traverse collection" c))
+              (unless (or (can-do-structural-building? c)
+                          (can-do-stateful-building? c))
+                (error "cannot build collection" c))]))))
+
+       (define multi-collection-part
+         (syntax/loc stx
+           ((non-coll-args ... c . cs)
+            (define colls (r:cons c cs))
+            ;; TODO are the structural / stateful combinations interesting?
+            (unless (for/and ([coll (in-list colls)])
+                      (or (and (can-do-structural-traversal? coll)
+                               (can-do-structural-building? coll))
+                          (and (can-do-stateful-traversal? coll)
+                               (can-do-stateful-building? coll))))
+              ;; TODO have better error message than that
+              (error "cannot traverse or build one of" colls))
+            
+            ;; While this may look like a (premature) optimization, it's not.
+            ;; The goal is not so much to avoid checking what kind of collection
+            ;; each thing is every iteration, but rather to make sure we treat
+            ;; collections consistently throughout the traversal. If, e.g., the
+            ;; iterator for one of the statefully-traversible collections turns
+            ;; out to be structurally-traversible, we still want to iterate over
+            ;; it statefully, as we first decided. Same for the mirror case of a
+            ;; structurally-traversible collection that also happens to be an
+            ;; iterator. This may turn out to be irrelevant.
+            (define structural? (r:map can-do-structural-traversal? colls))
+            (define iterator-likes (for/list ([coll (in-list colls)]
+                                              [s?   (in-list structural?)])
+                                     (if s? coll (make-iterator coll))))
+            (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
+            ;; TODO look up methods up front, if possible
+            (define structural-building? (can-do-structural-building? c))
+            (define stateful-builder
+              (if structural-building? #f (make-builder c)))
+
+            (let loop ([its iterator-likes] extra-acc ...)
+              (syntax-parameterize
+               ([-loop
+                 (make-rename-transformer #'loop)]
+                [-empty?
+                 (syntax-rules ()
+                   [(_)
+                    (and (r:ormap mt? its structural?) ; any empty?
+                         (or (r:andmap mt? its structural?) ; all empty?
+                             (error "all collections must have same size")))])]
+                [-first
+                 (syntax-rules ()
+                   [(_)
+                    (for/list ([it (in-list its)]
+                               [s? (in-list structural?)])
+                      (if s? (first it) (next it)))])]
+                [-rest
+                 (syntax-rules ()
+                   [(_)
+                    (for/list ([it (in-list its)]
+                               [s? (in-list structural?)])
+                      (if s? (rest it) it))])] ; already stepped
+                [-cons
+                 (syntax-rules ()
+                   [(_ x xs)
+                    (if structural-building?
+                        (cons x xs)
+                        (begin (add-next x stateful-builder)
+                               xs))])]
+                [-done
+                 (syntax-rules ()
+                   [(_)
+                    (if structural-building?
+                        (make-empty c)
+                        (finalize stateful-builder))])])
+               body-n-colls)))))
+
        (cond
-        [(r:ormap mt? its structural?) ; any empty?
-         (unless (r:andmap mt? its structural?) ; all empty?
-           (error "all collections must have same size"))
-         (if structural-building?
-             (make-empty c)
-             (finalize stateful-builder))]
-        [else ; keep going
-         (define elts
-           (for/list ([it (in-list its)]
-                      [s? (in-list structural?)])
-             (if s? (first it) (next it))))
-         (define nexts
-           (for/list ([it (in-list its)]
-                      [s? (in-list structural?)])
-             (if s? (rest it) it))) ; already stepped
-         (cond
-          [structural-building?
-           (define acc (loop nexts))
-           structural-body-n-coll]
-          [else ; stateful building
-           stateful-body-n-coll
-           (loop nexts)])]))])) ; returns finalized builder
+        [(and (syntax->datum #'body-1-coll)
+              (syntax->datum #'body-n-colls))
+         (quasisyntax/loc stx
+           (case-lambda
+             [#,@single-collection-part]
+             [#,@multi-collection-part]))]
+        [(syntax->datum #'body-1-coll)
+         (quasisyntax/loc stx (lambda #,@single-collection-part))]
+        [(syntax->datum #'body-n-colls)
+         (quasisyntax/loc stx (lambda #,@multi-collection-part))]
+        [else
+         (raise-syntax-error
+          'traversal "need to provide at least one body" stx)]))]))
 
 (define fallback-map
-  (transducer (f) (elt elts acc builder)
-              ((cons (f elt) acc))
-              ((add-next (f elt) builder))
-              ((cons (apply f elts) acc))
-              ((add-next (apply f elts) builder))))
+  (transducer
+   (f) ()
+   (if (-empty?)
+       (-done)
+       (-cons (f (-first)) (-loop (-rest))))
+   (if (-empty?)
+       (-done)
+       (-cons (apply f (-first)) (-loop (-rest))))))
+
 (define fallback-filter
-  (transducer (f) (elt elts acc builder)
-              ((if (f elt)
-                   (cons elt acc)
-                   acc))
-              ((when (f elt)
-                 (add-next elt builder)))
-              ;; TODO the n-ary template is still generated, but can't run
-              ;;  (the generic function raises an arity error before we even
-              ;;  get here)
-              (#f)
-              (#f)))
+  (transducer
+   (f) ()
+   (if (-empty?)
+       (-done)
+       (let ([elt (-first)])
+         (if (f elt)
+             (-cons elt (-loop (-rest)))
+             (-loop (-rest)))))
+   #f))
 
 
 ;;;---------------------------------------------------------------------------
