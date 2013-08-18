@@ -65,6 +65,33 @@
      (syntax-rules () [(_) (begin (next acc) acc)])])
    body))
 
+(define-syntax-rule (with-n-ary-traversal-parameters
+                     (loop its structural?) body)
+  (syntax-parameterize
+   ([-loop
+     (make-rename-transformer #'loop)]
+    [-empty?
+     (syntax-rules ()
+       [(_)
+        (and (r:ormap mt? its structural?) ; any empty?
+             (or (r:andmap mt? its structural?) ; all empty?
+                 (error "all collections must have same size")))])]
+    [-first
+     (syntax-rules ()
+       [(_)
+        (for/list ([it (in-list its)]
+                   [s? (in-list structural?)])
+          (if s? (first it) (next it)))])]
+    [-rest
+     (syntax-rules ()
+       [(_)
+        (for/list ([it (in-list its)]
+                   [s? (in-list structural?)])
+          (if s? (rest it) it))])]) ; already stepped
+   body))
+
+(define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
+
 (define-syntax (traversal stx)
   (syntax-case stx ()
     [(_ (non-coll-args ...) (extra-acc ...)
@@ -111,30 +138,10 @@
             (define iterator-likes (for/list ([coll (in-list colls)]
                                               [s?   (in-list structural?)])
                                      (if s? coll (make-iterator coll))))
-            (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
             ;; TODO look up methods up front, if possible
             (let loop ([its iterator-likes] extra-acc ...)
-              (syntax-parameterize
-               ([-loop
-                 (make-rename-transformer #'loop)]
-                [-empty?
-                 (syntax-rules ()
-                   [(_)
-                    (and (r:ormap mt? its structural?) ; any empty?
-                         (or (r:andmap mt? its structural?) ; all empty?
-                             (error "all collections must have same size")))])]
-                [-first
-                 (syntax-rules ()
-                   [(_)
-                    (for/list ([it (in-list its)]
-                               [s? (in-list structural?)])
-                      (if s? (first it) (next it)))])]
-                [-rest
-                 (syntax-rules ()
-                   [(_)
-                    (for/list ([it (in-list its)]
-                               [s? (in-list structural?)])
-                      (if s? (rest it) it))])]) ; already stepped
+              (with-n-ary-traversal-parameters
+               (loop its structural?)
                body-n-colls)))))
 
        (cond
@@ -313,52 +320,24 @@
             (define iterator-likes (for/list ([coll (in-list colls)]
                                               [s?   (in-list structural?)])
                                      (if s? coll (make-iterator coll))))
-            (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
             ;; TODO look up methods up front, if possible
-            (define structural-building? (can-do-structural-building? c))
-            (define stateful-builder
-              (if structural-building? #f (make-builder c)))
 
-            #,(let ()
-                (define (wrap body extra-acc-list)
-                  (quasisyntax/loc stx
-                    (syntax-parameterize
-                     ([-base
-                       (syntax-rules ()
-                         [(_)
-                          (if structural-building?
-                              (make-empty c)
-                              stateful-builder)])])
-                     (let loop ([its iterator-likes] #,@extra-acc-list)
-                       (syntax-parameterize
-                        ([-loop
-                          (make-rename-transformer #'loop)]
-                         [-empty?
-                          (syntax-rules ()
-                            [(_)
-                             (and (r:ormap mt? its structural?) ; any empty?
-                                  (or (r:andmap mt? its structural?) ; all empty?
-                                      (error "all collections must have same size")))])]
-                         [-first
-                          (syntax-rules ()
-                            [(_)
-                             (for/list ([it (in-list its)]
-                                        [s? (in-list structural?)])
-                               (if s? (first it) (next it)))])]
-                         [-rest
-                          (syntax-rules ()
-                            [(_)
-                             (for/list ([it (in-list its)]
-                                        [s? (in-list structural?)])
-                               (if s? (rest it) it))])]) ; already stepped
-                        #,body)))))
-                (quasisyntax/loc stx
-                  (if structural-building?
-                      #,(wrap #'body-n-colls-structural
-                              #'(extra-acc-structural ...))
-                      (begin #,(wrap #'body-n-colls-stateful
-                                     #'(extra-acc-stateful ...))
-                             (finalize stateful-builder))))))))
+            (if (can-do-structural-building? c)
+                (syntax-parameterize
+                 ([-base (syntax-rules () [(_) (make-empty c)])])
+                 (let loop ([its iterator-likes] extra-acc-structural ...)
+                   (with-n-ary-traversal-parameters
+                    (loop its structural?)
+                    body-n-colls-structural)))
+                (let ([stateful-builder (make-builder c)])
+                  (syntax-parameterize
+                   ([-base (syntax-rules () [(_) stateful-builder])])
+                   (begin
+                     (let loop ([its iterator-likes] extra-acc-stateful ...)
+                       (with-n-ary-traversal-parameters
+                        (loop its structural?)
+                        body-n-colls-stateful))
+                     (finalize stateful-builder))))))))
 
        (cond
         [(and (syntax->datum #'body-1-coll-structural)
