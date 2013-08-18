@@ -97,7 +97,7 @@
             ;; it statefully, as we first decided. Same for the mirror case of a
             ;; structurally-traversible collection that also happens to be an
             ;; iterator. This may turn out to be irrelevant.
-            (define structural? (r:map can-do-structural-building? colls))
+            (define structural? (r:map can-do-structural-traversal? colls))
             (define iterator-likes (for/list ([coll (in-list colls)]
                                               [s?   (in-list structural?)])
                                      (if s? coll (make-iterator coll))))
