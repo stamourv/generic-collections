@@ -20,19 +20,20 @@
   (collection-implements? c 'make-iterator))
 
 
-(define-syntax-parameter -empty? #f)
+(define-syntax-parameter -loop   (syntax-rules ()))
+(define-syntax-parameter -empty? (syntax-rules ()))
 ;; returns a list in multi-coll. case
-(define-syntax-parameter -first  #f)
+(define-syntax-parameter -first  (syntax-rules ()))
 ;; To be passed back to the loop.
 ;; Note: only works right if `-first' has been called.
-(define-syntax-parameter -rest   #f)
+(define-syntax-parameter -rest   (syntax-rules ()))
 ;; Get the rest, works only if `-first' has *not* been called.
-(define-syntax-parameter -rest!  #f)
+(define-syntax-parameter -rest!  (syntax-rules ()))
 
 
 (define-syntax (traversal stx)
   (syntax-case stx ()
-    [(_ (non-coll-args ...) (loop-id extra-acc ...)
+    [(_ (non-coll-args ...) (extra-acc ...)
         body-1-coll
         body-n-colls)
      (let ()
@@ -41,9 +42,11 @@
            ((non-coll-args ... c)
             (cond
              [(can-do-structural-traversal? c)
-              (let loop-id ([acc c] extra-acc ...)
+              (let loop ([acc c] extra-acc ...)
                 (syntax-parameterize
-                 ([-empty?
+                 ([-loop
+                   (make-rename-transformer #'loop)]
+                  [-empty?
                    (syntax-rules () [(_) (empty? acc)])]
                   [-first
                    (syntax-rules () [(_) (first acc)])]
@@ -53,9 +56,11 @@
                    (syntax-rules () [(_) (rest acc)])])
                  body-1-coll))]
              [(can-do-stateful-traversal? c)
-              (let loop-id ([acc (make-iterator c)] extra-acc ...)
+              (let loop ([acc (make-iterator c)] extra-acc ...)
                 (syntax-parameterize
-                 ([-empty?
+                 ([-loop
+                   (make-rename-transformer #'loop)]
+                  [-empty?
                    (syntax-rules () [(_) (not (has-next? acc))])]
                   [-first
                    (syntax-rules () [(_) (next acc)])]
@@ -91,9 +96,11 @@
                                      (if s? coll (make-iterator coll))))
             (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
             ;; TODO look up methods up front, if possible
-            (let loop-id ([its iterator-likes] extra-acc ...)
+            (let loop ([its iterator-likes] extra-acc ...)
               (syntax-parameterize
-               ([-empty?
+               ([-loop
+                 (make-rename-transformer #'loop)]
+                [-empty?
                  (syntax-rules ()
                    [(_)
                     (and (r:ormap mt? its structural?) ; any empty?
@@ -131,33 +138,33 @@
 
 (define fallback-foldr
   (traversal
-   (f base) (loop)
+   (f base) ()
    (if (-empty?)
        base
-       (f (-first) (loop (-rest))))
+       (f (-first) (-loop (-rest))))
    (if (-empty?)
        base
        ;; TODO can I do it without the append?
-       (apply f (r:append (-first) (list (loop (-rest))))))))
+       (apply f (r:append (-first) (list (-loop (-rest))))))))
 
 (define fallback-length
   (traversal
-   () (loop [n 0])
+   () ([n 0])
    (if (-empty?)
        n
-       (loop (-rest!) (add1 n)))
+       (-loop (-rest!) (add1 n)))
    #f))
 
 (define fallback-foldl
   (traversal
-   (f base) (loop [acc base])
+   (f base) ([acc base])
    (if (-empty?)
        acc
-       (loop (-rest) (f (-first) acc)))
+       (-loop (-rest) (f (-first) acc)))
    (if (-empty?)
        acc
        ;; TODO can I do it without the append?
-       (loop (-rest) (apply f (r:append (-first) (list acc)))))))
+       (-loop (-rest) (apply f (r:append (-first) (list acc)))))))
 
 (define (can-do-structural-building? c)
   (and (collection-implements? c 'make-empty)
