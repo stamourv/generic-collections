@@ -232,14 +232,7 @@
     (error "cannot build collection" c)]))
 
 
-(define-syntax-parameter -cons (syntax-rules ()))
-;; To build non-tail-recursively, use `-base'.
-;; If building structurally, builds on the way back from the end.
-;; If building statefully, builds on the way to the end.
 (define-syntax-parameter -base (syntax-rules ()))
-;; To build tail-recusively (with an accumulator), use `-init' and `-done'.
-(define-syntax-parameter -init (syntax-rules ()))
-(define-syntax-parameter -done (syntax-rules ()))
 
 ;; TODO abstract out parts common with traversal
 ;;   to do this, probably have some `with-traversal-syntax-parameterize'
@@ -247,8 +240,10 @@
 (define-syntax (transducer stx)
   (syntax-case stx ()
     [(_ (non-coll-args ...) (extra-acc ...)
-        body-1-coll
-        body-n-colls)
+        body-1-coll-structural
+        body-1-coll-stateful
+        body-n-colls-structural
+        body-n-colls-stateful)
      (let ()
        (define single-collection-part ; just missing the `lambda'
          (syntax/loc stx
@@ -257,14 +252,8 @@
              [(and (can-do-structural-traversal? c)
                    (can-do-structural-building? c))
               (syntax-parameterize
-               ([-cons
-                 (syntax-rules () [(_ x xs) (cons x xs)])]
-                [-base
-                 (syntax-rules () [(_) (make-empty c)])]
-                [-init
-                 (syntax-rules () [(_) (make-empty c)])]
-                [-done
-                 (syntax-rules () [(_ x) x])])
+               ([-base
+                 (syntax-rules () [(_) (make-empty c)])])
                (let loop ([acc c] extra-acc ...)
                  (syntax-parameterize
                   ([-loop
@@ -277,45 +266,34 @@
                     (syntax-rules () [(_) (rest acc)])]
                    [-rest!
                     (syntax-rules () [(_) (rest acc)])])
-                  body-1-coll)))]
+                  body-1-coll-structural)))]
              [(and (can-do-stateful-traversal? c)
                    (can-do-stateful-building? c))
               (let ([acc (make-iterator c)] [builder (make-builder c)])
                 (syntax-parameterize
-                 ([-cons
-                   ;; Since adding an element is stateful, sequence adding
-                   ;; and recurring.
-                   (syntax-rules () [(_ x xs) (begin (add-next x builder)
-                                                     xs)])]
-                  [-base
-                   (syntax-rules () [(_) (finalize builder)])]
-                  [-init
-                   ;; Doesn't really initialize, but gives a reference.
-                   (syntax-rules () [(_) builder])]
-                  [-done
-                   ;; This causes stateful traversals to carry the builder
-                   ;; around the loop when using `-init' and `-done'.
-                   ;; Not too problematic, I guess.
-                   (syntax-rules () [(_ x) (finalize x)])])
-                 (let loop (extra-acc ...)
-                   (syntax-parameterize
-                    ([-loop
-                      (...
-                       (syntax-rules ()
-                         [(_ in extra-arg ...)
-                          ;; No need to pass acc around, but can't drop it
-                          ;; either (can be side-effectful, like `-rest!').
-                          ;; If it's just `-rest', should be compiled away.
-                          (begin in (loop extra-arg ...))]))]
-                     [-empty?
-                      (syntax-rules () [(_) (not (has-next? acc))])]
-                     [-first
-                      (syntax-rules () [(_) (next acc)])]
-                     [-rest
-                      (syntax-rules () [(_) acc])]
-                     [-rest!
-                      (syntax-rules () [(_) (begin (next acc) acc)])])
-                    body-1-coll))))]
+                 ([-base
+                   (syntax-rules () [(_) builder])])
+                 (begin
+                   (let loop (extra-acc ...)
+                     (syntax-parameterize
+                      ([-loop
+                        (...
+                         (syntax-rules ()
+                           [(_ in extra-arg ...)
+                            ;; No need to pass acc around, but can't drop it
+                            ;; either (can be side-effectful, like `-rest!').
+                            ;; If it's just `-rest', should be compiled away.
+                            (begin in (loop extra-arg ...))]))]
+                       [-empty?
+                        (syntax-rules () [(_) (not (has-next? acc))])]
+                       [-first
+                        (syntax-rules () [(_) (next acc)])]
+                       [-rest
+                        (syntax-rules () [(_) acc])]
+                       [-rest!
+                        (syntax-rules () [(_) (begin (next acc) acc)])])
+                      body-1-coll-stateful))
+                   (finalize builder))))]
              [else
               ;; TODO are the structural / stateful combinations interesting?
               (unless (or (can-do-structural-traversal? c)
@@ -326,7 +304,7 @@
                 (error "cannot build collection" c))]))))
 
        (define multi-collection-part
-         (syntax/loc stx
+         (quasisyntax/loc stx
            ((non-coll-args ... c . cs)
             (define colls (r:cons c cs))
             ;; TODO are the structural / stateful combinations interesting?
@@ -357,80 +335,83 @@
             (define stateful-builder
               (if structural-building? #f (make-builder c)))
 
-            (syntax-parameterize
-             ([-cons
-               (syntax-rules ()
-                 [(_ x xs)
+            ;; TODO this loop unswitching (which is actually necessary) really
+            ;;  makes me wish for `with-traversal-syntax-parameterize'
+            #,(let ()
+                (define (wrap body)
+                  (quasisyntax/loc stx
+                    (syntax-parameterize
+                     ([-base
+                       (syntax-rules ()
+                         [(_)
+                          (if structural-building?
+                              (make-empty c)
+                              stateful-builder)])])
+                     (let loop ([its iterator-likes] extra-acc ...)
+                       (syntax-parameterize
+                        ([-loop
+                          (make-rename-transformer #'loop)]
+                         [-empty?
+                          (syntax-rules ()
+                            [(_)
+                             (and (r:ormap mt? its structural?) ; any empty?
+                                  (or (r:andmap mt? its structural?) ; all empty?
+                                      (error "all collections must have same size")))])]
+                         [-first
+                          (syntax-rules ()
+                            [(_)
+                             (for/list ([it (in-list its)]
+                                        [s? (in-list structural?)])
+                               (if s? (first it) (next it)))])]
+                         [-rest
+                          (syntax-rules ()
+                            [(_)
+                             (for/list ([it (in-list its)]
+                                        [s? (in-list structural?)])
+                               (if s? (rest it) it))])]) ; already stepped
+                        #,body)))))
+                (quasisyntax/loc stx
                   (if structural-building?
-                      (cons x xs)
-                      (begin (add-next x stateful-builder)
-                             xs))])]
-              [-base
-               (syntax-rules ()
-                 [(_)
-                  (if structural-building?
-                      (make-empty c)
-                      (finalize stateful-builder))])]
-              [-init
-               (syntax-rules ()
-                 [(_)
-                  (if structural-building?
-                      (make-empty c)
-                      builder)])]
-              [-done
-               (syntax-rules ()
-                 [(_ x)
-                  (if structural-building?
-                      x
-                      (finalize x))])])
-             (let loop ([its iterator-likes] extra-acc ...)
-               (syntax-parameterize
-                ([-loop
-                  (make-rename-transformer #'loop)]
-                 [-empty?
-                  (syntax-rules ()
-                    [(_)
-                     (and (r:ormap mt? its structural?) ; any empty?
-                          (or (r:andmap mt? its structural?) ; all empty?
-                              (error "all collections must have same size")))])]
-                 [-first
-                  (syntax-rules ()
-                    [(_)
-                     (for/list ([it (in-list its)]
-                                [s? (in-list structural?)])
-                       (if s? (first it) (next it)))])]
-                 [-rest
-                  (syntax-rules ()
-                    [(_)
-                     (for/list ([it (in-list its)]
-                                [s? (in-list structural?)])
-                       (if s? (rest it) it))])]) ; already stepped
-                body-n-colls))))))
+                      #,(wrap #'body-n-colls-structural)
+                      (begin #,(wrap #'body-n-colls-stateful)
+                             (finalize stateful-builder))))))))
 
        (cond
-        [(and (syntax->datum #'body-1-coll)
-              (syntax->datum #'body-n-colls))
+        [(and (syntax->datum #'body-1-coll-structural)
+              (syntax->datum #'body-1-coll-stateful)
+              (syntax->datum #'body-n-colls-structural)
+              (syntax->datum #'body-n-colls-stateful))
          (quasisyntax/loc stx
            (case-lambda
              [#,@single-collection-part]
              [#,@multi-collection-part]))]
-        [(syntax->datum #'body-1-coll)
+        [(and (syntax->datum #'body-1-coll-structural)
+              (syntax->datum #'body-1-coll-stateful))
          (quasisyntax/loc stx (lambda #,@single-collection-part))]
-        [(syntax->datum #'body-n-colls)
+        [(and (syntax->datum #'body-n-colls-structural)
+              (syntax->datum #'body-n-colls-stateful))
          (quasisyntax/loc stx (lambda #,@multi-collection-part))]
         [else
          (raise-syntax-error
-          'traversal "need to provide at least one body" stx)]))]))
+          'traversal "bad body specification" stx)]))]))
 
 (define fallback-map
   (transducer
    (f) ()
    (if (-empty?)
        (-base)
-       (-cons (f (-first)) (-loop (-rest))))
+       (cons (f (-first)) (-loop (-rest))))
+   (if (-empty?)
+       'done
+       (begin (add-next (f (-first)) (-base))
+              (-loop (-rest))))
    (if (-empty?)
        (-base)
-       (-cons (apply f (-first)) (-loop (-rest))))))
+       (cons (apply f (-first)) (-loop (-rest))))
+   (if (-empty?)
+       'done
+       (begin (add-next (apply f (-first)) (-base))
+              (-loop (-rest))))))
 
 (define fallback-filter
   (transducer
@@ -439,16 +420,32 @@
        (-base)
        (let ([elt (-first)])
          (if (f elt)
-             (-cons elt (-loop (-rest)))
+             (cons elt (-loop (-rest)))
              (-loop (-rest)))))
+   (if (-empty?)
+       'done
+       (let ([elt (-first)])
+         (when (f elt)
+           (add-next elt (-base)))
+         (-loop (-rest))))
+   #f
    #f))
 
 (define fallback-reverse
   (transducer
-   () ([acc (-init)])
+   () ([acc (-base)])
    (if (-empty?)
-       (-done acc)
-       (-loop (-rest) (-cons (-first) acc)))
+       acc
+       (-loop (-rest) (cons (-first) acc)))
+   (if (-empty?)
+       'done
+       (let ([elt (-first)])
+         (define res
+           (begin0 (-loop (-rest) (-base)) ; extraneous arg, but oh well.
+             ;; TODO maybe separate sets of accs for structural and stateful?
+           (add-next elt (-base))))
+         res))
+   #f
    #f))
 ;; TODO test a n-ary reverse-like thing (reverse itself makes no sense n-ary)
 
