@@ -35,81 +35,98 @@
     [(_ (non-coll-args ...) (loop-id extra-acc ...)
         body-1-coll
         body-n-colls)
-     (quasisyntax/loc stx
-       (case-lambda
-         ;; single-collection case
-         [(non-coll-args ... c)
-          (cond
-           [(can-do-structural-traversal? c)
-            (let loop-id ([acc c] extra-acc ...)
+     (let ()
+       (define single-collection-part ; just missing the `lambda'
+         (syntax/loc stx
+           ((non-coll-args ... c)
+            (cond
+             [(can-do-structural-traversal? c)
+              (let loop-id ([acc c] extra-acc ...)
+                (syntax-parameterize
+                 ([-empty?
+                   (syntax-rules () [(_) (empty? acc)])]
+                  [-first
+                   (syntax-rules () [(_) (first acc)])]
+                  [-rest
+                   (syntax-rules () [(_) (rest acc)])]
+                  [-rest!
+                   (syntax-rules () [(_) (rest acc)])])
+                 body-1-coll))]
+             [(can-do-stateful-traversal? c)
+              (let loop-id ([acc (make-iterator c)] extra-acc ...)
+                (syntax-parameterize
+                 ([-empty?
+                   (syntax-rules () [(_) (not (has-next? acc))])]
+                  [-first
+                   (syntax-rules () [(_) (next acc)])]
+                  [-rest
+                   (syntax-rules () [(_) acc])]
+                  [-rest!
+                   (syntax-rules () [(_) (begin (next acc) acc)])])
+                 body-1-coll))]
+             [else
+              (error "cannot traverse collection" c)]))))
+
+       (define multi-collection-part
+         (syntax/loc stx
+           ((non-coll-args ... c . cs)
+            (define colls (r:cons c cs))
+            (unless (for/and ([coll (in-list colls)])
+                      (or (can-do-structural-traversal? coll)
+                          can-do-stateful-traversal? coll))
+              ;; TODO have better error message than that
+              (error "cannot traverse one of" colls))
+            ;; While this may look like a (premature) optimization, it's not.
+            ;; The goal is not so much to avoid checking what kind of collection
+            ;; each thing is every iteration, but rather to make sure we treat
+            ;; collections consistently throughout the traversal. If, e.g., the
+            ;; iterator for one of the statefully-traversible collections turns
+            ;; out to be structurally-traversible, we still want to iterate over
+            ;; it statefully, as we first decided. Same for the mirror case of a
+            ;; structurally-traversible collection that also happens to be an
+            ;; iterator. This may turn out to be irrelevant.
+            (define structural? (r:map can-do-structural-building? colls))
+            (define iterator-likes (for/list ([coll (in-list colls)]
+                                              [s?   (in-list structural?)])
+                                     (if s? coll (make-iterator coll))))
+            (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
+            ;; TODO look up methods up front, if possible
+            (let loop-id ([its iterator-likes] extra-acc ...)
               (syntax-parameterize
                ([-empty?
-                 (syntax-rules () [(_) (empty? acc)])]
+                 (syntax-rules ()
+                   [(_)
+                    (and (r:ormap mt? its structural?) ; any empty?
+                         (or (r:andmap mt? its structural?) ; all empty?
+                             (error "all collections must have same size")))])]
                 [-first
-                 (syntax-rules () [(_) (first acc)])]
+                 (syntax-rules ()
+                   [(_)
+                    (for/list ([it (in-list its)]
+                               [s? (in-list structural?)])
+                      (if s? (first it) (next it)))])]
                 [-rest
-                 (syntax-rules () [(_) (rest acc)])]
-                [-rest!
-                 (syntax-rules () [(_) (rest acc)])])
-               body-1-coll))]
-           [(can-do-stateful-traversal? c)
-            (let loop-id ([acc (make-iterator c)] extra-acc ...)
-              (syntax-parameterize
-               ([-empty?
-                 (syntax-rules () [(_) (not (has-next? acc))])]
-                [-first
-                 (syntax-rules () [(_) (next acc)])]
-                [-rest
-                 (syntax-rules () [(_) acc])]
-                [-rest!
-                 (syntax-rules () [(_) (begin (next acc) acc)])])
-               body-1-coll))]
-           [else
-            (error "cannot traverse collection" c)])]
-         ;; n-collection case
-         [(non-coll-args ... c . cs)
-          (define colls (r:cons c cs))
-          (unless (for/and ([coll (in-list colls)])
-                    (or (can-do-structural-traversal? coll)
-                        can-do-stateful-traversal? coll))
-            ;; TODO have better error message than that
-            (error "cannot traverse one of" colls))
-          ;; While this may look like a (premature) optimization, it's not.
-          ;; The goal is not so much to avoid checking what kind of collection
-          ;; each thing is every iteration, but rather to make sure we treat
-          ;; collections consistently throughout the traversal. If, e.g., the
-          ;; iterator for one of the statefully-traversible collections turns
-          ;; out to be structurally-traversible, we still want to iterate over
-          ;; it statefully, as we first decided. Same for the mirror case of a
-          ;; structurally-traversible collection that also happens to be an
-          ;; iterator. This may turn out to be irrelevant.
-          (define structural? (r:map can-do-structural-building? colls))
-          (define iterator-likes (for/list ([coll (in-list colls)]
-                                            [s?   (in-list structural?)])
-                                   (if s? coll (make-iterator coll))))
-          (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
-          ;; TODO look up methods up front, if possible
-          (let loop-id ([its iterator-likes] extra-acc ...)
-            (syntax-parameterize
-             ([-empty?
-               (syntax-rules ()
-                 [(_)
-                  (and (r:ormap mt? its structural?) ; any empty?
-                       (or (r:andmap mt? its structural?) ; all empty?
-                           (error "all collections must have same size")))])]
-              [-first
-               (syntax-rules ()
-                 [(_)
-                  (for/list ([it (in-list its)]
-                             [s? (in-list structural?)])
-                    (if s? (first it) (next it)))])]
-              [-rest
-               (syntax-rules ()
-                 [(_)
-                  (for/list ([it (in-list its)]
-                             [s? (in-list structural?)])
-                    (if s? (rest it) it))])]) ; already stepped
-             body-n-colls))]))]))
+                 (syntax-rules ()
+                   [(_)
+                    (for/list ([it (in-list its)]
+                               [s? (in-list structural?)])
+                      (if s? (rest it) it))])]) ; already stepped
+               body-n-colls)))))
+
+       (cond
+        [(and (syntax->datum #'body-1-coll)
+              (syntax->datum #'body-n-colls))
+         (quasisyntax/loc stx
+           (case-lambda
+             [#,@single-collection-part]
+             [#,@multi-collection-part]))]
+        [(syntax->datum #'body-1-coll)
+         (quasisyntax/loc stx (lambda #,@single-collection-part))]
+        [(syntax->datum #'body-n-colls)
+         (quasisyntax/loc stx (lambda #,@multi-collection-part))]
+        [else
+         (raise-syntax-error
+          'traversal "need to provide at least one body" stx)]))]))
 ;; TODO implement transducer using traversal?
 
 (define fallback-foldr
@@ -129,7 +146,7 @@
    (if (-empty?)
        n
        (loop (-rest!) (add1 n)))
-   #f)) ;; TODO allow clients to only have 1 collection case
+   #f))
 
 (define fallback-foldl
   (traversal
