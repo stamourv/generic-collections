@@ -31,44 +31,44 @@
 (define-syntax-parameter -rest!  (syntax-rules ()))
 
 
-(define-syntax-rule (with-structural-traversal-parameters (loop acc) body)
-  (syntax-parameterize
-   ([-loop
-     (make-rename-transformer #'loop)]
-    [-empty?
-     (syntax-rules () [(_) (empty? acc)])]
-    [-first
-     (syntax-rules () [(_) (first acc)])]
-    [-rest
-     (syntax-rules () [(_) (rest acc)])]
-    [-rest!
-     (syntax-rules () [(_) (rest acc)])])
-   body))
+(define-syntax-rule (with-structural-traversal (c) (extra-acc ...) body)
+  (let loop ([acc c] extra-acc ...)
+    (syntax-parameterize
+     ([-loop
+       (make-rename-transformer #'loop)]
+      [-empty?
+       (syntax-rules () [(_) (empty? acc)])]
+      [-first
+       (syntax-rules () [(_) (first acc)])]
+      [-rest
+       (syntax-rules () [(_) (rest acc)])]
+      [-rest!
+       (syntax-rules () [(_) (rest acc)])])
+     body)))
 
-(define-syntax-rule (with-stateful-traversal-parameters (loop acc) body)
-  (syntax-parameterize
-   ([-loop
-     (...
-      (syntax-rules ()
-        [(_ in extra-arg ...)
-         ;; No need to pass acc around, but can't drop it either (can be
-         ;; side-effectful, like `-rest!'). If it's just `-rest', should be
-         ;; compiled away anyway.
-         (begin in (loop extra-arg ...))]))]
-    [-empty?
-     (syntax-rules () [(_) (not (has-next? acc))])]
-    [-first
-     (syntax-rules () [(_) (next acc)])]
-    [-rest
-     (syntax-rules () [(_) acc])]
-    [-rest!
-     (syntax-rules () [(_) (begin (next acc) acc)])])
-   body))
+(define-syntax-rule (with-stateful-traversal (c) (extra-acc ...) body)
+  (let ([acc (make-iterator c)])
+    (let loop (extra-acc ...)
+      (syntax-parameterize
+       ([-loop
+         (...
+          (syntax-rules ()
+            [(_ in extra-arg ...)
+             ;; No need to pass acc around, but can't drop it either (can be
+             ;; side-effectful, like `-rest!'). If it's just `-rest', should be
+             ;; compiled away anyway.
+             (begin in (loop extra-arg ...))]))]
+        [-empty?
+         (syntax-rules () [(_) (not (has-next? acc))])]
+        [-first
+         (syntax-rules () [(_) (next acc)])]
+        [-rest
+         (syntax-rules () [(_) acc])]
+        [-rest!
+         (syntax-rules () [(_) (begin (next acc) acc)])])
+       body))))
 
-(define-syntax-rule (with-n-ary-traversal-preamble
-                     ;; binds `structural?' and `iterator-likes'
-                     (colls structural? iterator-likes)
-                     body)
+(define-syntax-rule (with-n-ary-traversal (colls) (extra-acc ...) body)
   (let ()
     ;; While this may look like a (premature) optimization, it's not.
     ;; The goal is not so much to avoid checking what kind of collection
@@ -84,32 +84,29 @@
                                       [s?   (in-list structural?)])
                              (if s? coll (make-iterator coll))))
     ;; TODO look up methods up front, if possible
-    body))
-
-(define-syntax-rule (with-n-ary-traversal-parameters
-                     (loop its structural?) body)
-  (syntax-parameterize
-   ([-loop
-     (make-rename-transformer #'loop)]
-    [-empty?
-     (syntax-rules ()
-       [(_)
-        (and (r:ormap mt? its structural?) ; any empty?
-             (or (r:andmap mt? its structural?) ; all empty?
-                 (error "all collections must have same size")))])]
-    [-first
-     (syntax-rules ()
-       [(_)
-        (for/list ([it (in-list its)]
-                   [s? (in-list structural?)])
-          (if s? (first it) (next it)))])]
-    [-rest
-     (syntax-rules ()
-       [(_)
-        (for/list ([it (in-list its)]
-                   [s? (in-list structural?)])
-          (if s? (rest it) it))])]) ; already stepped
-   body))
+    (let loop ([its iterator-likes] extra-acc ...)
+      (syntax-parameterize
+       ([-loop
+         (make-rename-transformer #'loop)]
+        [-empty?
+         (syntax-rules ()
+           [(_)
+            (and (r:ormap mt? its structural?) ; any empty?
+                 (or (r:andmap mt? its structural?) ; all empty?
+                     (error "all collections must have same size")))])]
+        [-first
+         (syntax-rules ()
+           [(_)
+            (for/list ([it (in-list its)]
+                       [s? (in-list structural?)])
+              (if s? (first it) (next it)))])]
+        [-rest
+         (syntax-rules ()
+           [(_)
+            (for/list ([it (in-list its)]
+                       [s? (in-list structural?)])
+              (if s? (rest it) it))])]) ; already stepped
+       body))))
 
 (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
 
@@ -124,16 +121,13 @@
            ((non-coll-args ... c)
             (cond
              [(can-do-structural-traversal? c)
-              (let loop ([acc c] extra-acc ...)
-                (with-structural-traversal-parameters
-                 (loop acc)
-                 body-1-coll))]
+              (with-structural-traversal
+               (c) (extra-acc ...)
+               body-1-coll)]
              [(can-do-stateful-traversal? c)
-              (let ([acc (make-iterator c)])
-                (let loop (extra-acc ...)
-                  (with-stateful-traversal-parameters
-                   (loop acc)
-                   body-1-coll)))]
+              (with-stateful-traversal
+               (c) (extra-acc ...)
+               body-1-coll)]
              [else
               (error "cannot traverse collection" c)]))))
 
@@ -146,12 +140,9 @@
                           can-do-stateful-traversal? coll))
               ;; TODO have better error message than that
               (error "cannot traverse one of" colls))
-            (with-n-ary-traversal-preamble
-             (colls structural? iterator-likes)
-             (let loop ([its iterator-likes] extra-acc ...)
-               (with-n-ary-traversal-parameters
-                (loop its structural?)
-                body-n-colls))))))
+            (with-n-ary-traversal
+             (colls) (extra-acc ...)
+             body-n-colls))))
 
        (cond
         [(and (syntax->datum #'body-1-coll)
@@ -294,19 +285,17 @@
                    (can-do-structural-building? c))
               (with-structural-building
                (c)
-               (let loop ([acc c] extra-acc-structural ...)
-                 (with-structural-traversal-parameters
-                  (loop acc)
-                  body-1-coll-structural)))]
+               (with-structural-traversal
+                (c) (extra-acc-structural ...)
+                body-1-coll-structural))]
              [(and (can-do-stateful-traversal? c)
                    (can-do-stateful-building? c))
               (let ([acc (make-iterator c)])
                 (with-stateful-building
                  (c)
-                 (let loop (extra-acc-stateful ...)
-                   (with-stateful-traversal-parameters
-                    (loop acc)
-                    body-1-coll-stateful))))]
+                 (with-stateful-traversal
+                  (c) (extra-acc-stateful ...)
+                  body-1-coll-stateful)))]
              [else
               ;; TODO are the structural / stateful combinations interesting?
               (unless (or (can-do-structural-traversal? c)
@@ -328,21 +317,17 @@
                                (can-do-stateful-building? coll))))
               ;; TODO have better error message than that
               (error "cannot traverse or build one of" colls))
-            (with-n-ary-traversal-preamble
-             (colls structural? iterator-likes)
-             (if (can-do-structural-building? c)
-                 (with-structural-building
-                  (c)
-                  (let loop ([its iterator-likes] extra-acc-structural ...)
-                    (with-n-ary-traversal-parameters
-                     (loop its structural?)
-                     body-n-colls-structural)))
-                 (with-stateful-building
-                  (c)
-                  (let loop ([its iterator-likes] extra-acc-stateful ...)
-                    (with-n-ary-traversal-parameters
-                     (loop its structural?)
-                     body-n-colls-stateful))))))))
+            (if (can-do-structural-building? c)
+                (with-structural-building
+                 (c)
+                 (with-n-ary-traversal
+                  (colls) (extra-acc-structural ...)
+                  body-n-colls-structural))
+                (with-stateful-building
+                 (c)
+                 (with-n-ary-traversal
+                  (colls) (extra-acc-stateful ...)
+                  body-n-colls-stateful))))))
 
        (cond
         [(and (syntax->datum #'body-1-coll-structural)
