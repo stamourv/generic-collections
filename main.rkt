@@ -449,7 +449,6 @@
          res))
    #f
    #f))
-;; TODO test a n-ary reverse-like thing (reverse itself makes no sense n-ary)
 
 
 ;;;---------------------------------------------------------------------------
@@ -571,6 +570,23 @@
          (define (cons x k)
            (kons-list (r:cons x (kons-list-elts k))))])
 
+;; Not a useful function, just an additional test for the transducer macro.
+(define n-ary-reverse
+  (transducer
+   () ([acc (-base)]) ()
+   #f
+   #f
+   (if (-empty?)
+       acc
+       (-loop (-rest) (cons (-first) acc)))
+   (if (-empty?)
+       'done
+       (let ([elt (-first)])
+         (define res
+           (begin0 (-loop (-rest))
+           (add-next elt (-base))))
+         res))))
+
 (module+ test
   (require rackunit)
 
@@ -617,6 +633,8 @@
                   '(2 7 13 (1 6 12 (0 5 11 x))))
     
     (check-equal? (reverse (kons-list '(1 2 3))) (kons-list '(3 2 1)))
+    (check-equal? (n-ary-reverse (kons-list '(1 2 3)) (kons-list '(4 5 6)))
+                  (kons-list '((3 6) (2 5) (1 4))))
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -747,4 +765,6 @@
                   '(2 7 13 (1 6 12 (0 5 11 x))))
 
     (check-equal? (reverse (vektor '#(1 2 3))) (vektor '#(3 2 1)))
+    (check-equal? (n-ary-reverse (vektor '#(1 2 3)) (kons-list '(4 5 6)))
+                  (vektor '#((3 6) (2 5) (1 4))))
     ))
