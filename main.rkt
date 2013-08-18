@@ -56,19 +56,26 @@
                    (syntax-rules () [(_) (rest acc)])])
                  body-1-coll))]
              [(can-do-stateful-traversal? c)
-              (let loop ([acc (make-iterator c)] extra-acc ...)
-                (syntax-parameterize
-                 ([-loop
-                   (make-rename-transformer #'loop)]
-                  [-empty?
-                   (syntax-rules () [(_) (not (has-next? acc))])]
-                  [-first
-                   (syntax-rules () [(_) (next acc)])]
-                  [-rest
-                   (syntax-rules () [(_) acc])]
-                  [-rest!
-                   (syntax-rules () [(_) (begin (next acc) acc)])])
-                 body-1-coll))]
+              (let ([acc (make-iterator c)])
+                (let loop (extra-acc ...)
+                  (syntax-parameterize
+                   ([-loop
+                     (...
+                      (syntax-rules ()
+                        [(_ in extra-arg ...)
+                         ;; No need to pass acc around, but can't drop it
+                         ;; either (can be side-effectful, like `-rest!').
+                         ;; If it's just `-rest', should be compiled away.
+                         (begin in (loop extra-arg ...))]))]
+                    [-empty?
+                     (syntax-rules () [(_) (not (has-next? acc))])]
+                    [-first
+                     (syntax-rules () [(_) (next acc)])]
+                    [-rest
+                     (syntax-rules () [(_) acc])]
+                    [-rest!
+                     (syntax-rules () [(_) (begin (next acc) acc)])])
+                   body-1-coll)))]
              [else
               (error "cannot traverse collection" c)]))))
 
