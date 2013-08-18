@@ -65,6 +65,27 @@
      (syntax-rules () [(_) (begin (next acc) acc)])])
    body))
 
+(define-syntax-rule (with-n-ary-traversal-preamble
+                     ;; binds `structural?' and `iterator-likes'
+                     (colls structural? iterator-likes)
+                     body)
+  (let ()
+    ;; While this may look like a (premature) optimization, it's not.
+    ;; The goal is not so much to avoid checking what kind of collection
+    ;; each thing is every iteration, but rather to make sure we treat
+    ;; collections consistently throughout the traversal. If, e.g., the
+    ;; iterator for one of the statefully-traversible collections turns
+    ;; out to be structurally-traversible, we still want to iterate over
+    ;; it statefully, as we first decided. Same for the mirror case of a
+    ;; structurally-traversible collection that also happens to be an
+    ;; iterator. This may turn out to be irrelevant.
+    (define structural? (r:map can-do-structural-traversal? colls))
+    (define iterator-likes (for/list ([coll (in-list colls)]
+                                      [s?   (in-list structural?)])
+                             (if s? coll (make-iterator coll))))
+    ;; TODO look up methods up front, if possible
+    body))
+
 (define-syntax-rule (with-n-ary-traversal-parameters
                      (loop its structural?) body)
   (syntax-parameterize
@@ -125,24 +146,12 @@
                           can-do-stateful-traversal? coll))
               ;; TODO have better error message than that
               (error "cannot traverse one of" colls))
-            ;; While this may look like a (premature) optimization, it's not.
-            ;; The goal is not so much to avoid checking what kind of collection
-            ;; each thing is every iteration, but rather to make sure we treat
-            ;; collections consistently throughout the traversal. If, e.g., the
-            ;; iterator for one of the statefully-traversible collections turns
-            ;; out to be structurally-traversible, we still want to iterate over
-            ;; it statefully, as we first decided. Same for the mirror case of a
-            ;; structurally-traversible collection that also happens to be an
-            ;; iterator. This may turn out to be irrelevant.
-            (define structural? (r:map can-do-structural-traversal? colls))
-            (define iterator-likes (for/list ([coll (in-list colls)]
-                                              [s?   (in-list structural?)])
-                                     (if s? coll (make-iterator coll))))
-            ;; TODO look up methods up front, if possible
-            (let loop ([its iterator-likes] extra-acc ...)
-              (with-n-ary-traversal-parameters
-               (loop its structural?)
-               body-n-colls)))))
+            (with-n-ary-traversal-preamble
+             (colls structural? iterator-likes)
+             (let loop ([its iterator-likes] extra-acc ...)
+               (with-n-ary-traversal-parameters
+                (loop its structural?)
+                body-n-colls))))))
 
        (cond
         [(and (syntax->datum #'body-1-coll)
@@ -306,38 +315,24 @@
                                (can-do-stateful-building? coll))))
               ;; TODO have better error message than that
               (error "cannot traverse or build one of" colls))
-            
-            ;; While this may look like a (premature) optimization, it's not.
-            ;; The goal is not so much to avoid checking what kind of collection
-            ;; each thing is every iteration, but rather to make sure we treat
-            ;; collections consistently throughout the traversal. If, e.g., the
-            ;; iterator for one of the statefully-traversible collections turns
-            ;; out to be structurally-traversible, we still want to iterate over
-            ;; it statefully, as we first decided. Same for the mirror case of a
-            ;; structurally-traversible collection that also happens to be an
-            ;; iterator. This may turn out to be irrelevant.
-            (define structural? (r:map can-do-structural-traversal? colls))
-            (define iterator-likes (for/list ([coll (in-list colls)]
-                                              [s?   (in-list structural?)])
-                                     (if s? coll (make-iterator coll))))
-            ;; TODO look up methods up front, if possible
-
-            (if (can-do-structural-building? c)
-                (syntax-parameterize
-                 ([-base (syntax-rules () [(_) (make-empty c)])])
-                 (let loop ([its iterator-likes] extra-acc-structural ...)
-                   (with-n-ary-traversal-parameters
-                    (loop its structural?)
-                    body-n-colls-structural)))
-                (let ([stateful-builder (make-builder c)])
-                  (syntax-parameterize
-                   ([-base (syntax-rules () [(_) stateful-builder])])
-                   (begin
-                     (let loop ([its iterator-likes] extra-acc-stateful ...)
-                       (with-n-ary-traversal-parameters
-                        (loop its structural?)
-                        body-n-colls-stateful))
-                     (finalize stateful-builder))))))))
+            (with-n-ary-traversal-preamble
+             (colls structural? iterator-likes)
+             (if (can-do-structural-building? c)
+                 (syntax-parameterize
+                  ([-base (syntax-rules () [(_) (make-empty c)])])
+                  (let loop ([its iterator-likes] extra-acc-structural ...)
+                    (with-n-ary-traversal-parameters
+                     (loop its structural?)
+                     body-n-colls-structural)))
+                 (let ([stateful-builder (make-builder c)])
+                   (syntax-parameterize
+                    ([-base (syntax-rules () [(_) stateful-builder])])
+                    (begin
+                      (let loop ([its iterator-likes] extra-acc-stateful ...)
+                        (with-n-ary-traversal-parameters
+                         (loop its structural?)
+                         body-n-colls-stateful))
+                      (finalize stateful-builder)))))))))
 
        (cond
         [(and (syntax->datum #'body-1-coll-structural)
