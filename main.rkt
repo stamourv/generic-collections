@@ -233,11 +233,17 @@
 
 
 (define-syntax-parameter -cons (syntax-rules ()))
+;; To build non-tail-recursively, use `-base'.
+;; If building structurally, builds on the way back from the end.
+;; If building statefully, builds on the way to the end.
+(define-syntax-parameter -base (syntax-rules ()))
+;; To build tail-recusively (with an accumulator), use `-init' and `-done'.
+(define-syntax-parameter -init (syntax-rules ()))
 (define-syntax-parameter -done (syntax-rules ()))
 
-;; If we're building structurally, build on the way back from the end.
-;; If we're building statefully, build on the way to the end.
 ;; TODO abstract out parts common with traversal
+;;   to do this, probably have some `with-traversal-syntax-parameterize'
+;;   and same for builder that take, say, to local loop var ids as args
 (define-syntax (transducer stx)
   (syntax-case stx ()
     [(_ (non-coll-args ...) (extra-acc ...)
@@ -250,56 +256,66 @@
             (cond
              [(and (can-do-structural-traversal? c)
                    (can-do-structural-building? c))
-              (let loop ([acc c] extra-acc ...)
-                (syntax-parameterize
-                 ([-loop
-                   (make-rename-transformer #'loop)]
-                  [-empty?
-                   (syntax-rules () [(_) (empty? acc)])]
-                  [-first
-                   (syntax-rules () [(_) (first acc)])]
-                  [-rest
-                   (syntax-rules () [(_) (rest acc)])]
-                  [-rest!
-                   (syntax-rules () [(_) (rest acc)])]
-                  [-cons
-                   (syntax-rules () [(_ x xs) (cons x xs)])]
-                  [-done
-                   (syntax-rules () [(_) (make-empty c)])])
-                 body-1-coll))]
+              (syntax-parameterize
+               ([-cons
+                 (syntax-rules () [(_ x xs) (cons x xs)])]
+                [-base
+                 (syntax-rules () [(_) (make-empty c)])]
+                [-init
+                 (syntax-rules () [(_) (make-empty c)])]
+                [-done
+                 (syntax-rules () [(_ x) x])])
+               (let loop ([acc c] extra-acc ...)
+                 (syntax-parameterize
+                  ([-loop
+                    (make-rename-transformer #'loop)]
+                   [-empty?
+                    (syntax-rules () [(_) (empty? acc)])]
+                   [-first
+                    (syntax-rules () [(_) (first acc)])]
+                   [-rest
+                    (syntax-rules () [(_) (rest acc)])]
+                   [-rest!
+                    (syntax-rules () [(_) (rest acc)])])
+                  body-1-coll)))]
              [(and (can-do-stateful-traversal? c)
                    (can-do-stateful-building? c))
               (let ([acc (make-iterator c)] [builder (make-builder c)])
-                (let loop (extra-acc ...)
-                  (syntax-parameterize
-                   ([-loop
-                     (...
-                      (syntax-rules ()
-                        [(_ in extra-arg ...)
-                         ;; No need to pass acc around, but can't drop it
-                         ;; either (can be side-effectful, like `-rest!').
-                         ;; If it's just `-rest', should be compiled away.
-                         (begin in (loop extra-arg ...))]))]
-                    [-empty?
-                     (syntax-rules () [(_) (not (has-next? acc))])]
-                    [-first
-                     (syntax-rules () [(_) (next acc)])]
-                    [-rest
-                     (syntax-rules () [(_) acc])]
-                    [-rest!
-                     (syntax-rules () [(_) (begin (next acc) acc)])]
-                    [-cons
-                     ;; Since adding an element is stateful, sequence adding
-                     ;; and recurring.
-                     ;; TODO will this pattern work for `reverse'?
-                     ;;   probably, `-cons' will just be in accumulator position.
-                     ;;   also test a n-ary reverse-like thing (reverse itself
-                     ;;   makes no sense n-ary)
-                     (syntax-rules () [(_ x xs) (begin (add-next x builder)
-                                                       xs)])]
-                    [-done
-                     (syntax-rules () [(_) (finalize builder)])])
-                   body-1-coll)))]
+                (syntax-parameterize
+                 ([-cons
+                   ;; Since adding an element is stateful, sequence adding
+                   ;; and recurring.
+                   (syntax-rules () [(_ x xs) (begin (add-next x builder)
+                                                     xs)])]
+                  [-base
+                   (syntax-rules () [(_) (finalize builder)])]
+                  [-init
+                   ;; Doesn't really initialize, but gives a reference.
+                   (syntax-rules () [(_) builder])]
+                  [-done
+                   ;; This causes stateful traversals to carry the builder
+                   ;; around the loop when using `-init' and `-done'.
+                   ;; Not too problematic, I guess.
+                   (syntax-rules () [(_ x) (finalize x)])])
+                 (let loop (extra-acc ...)
+                   (syntax-parameterize
+                    ([-loop
+                      (...
+                       (syntax-rules ()
+                         [(_ in extra-arg ...)
+                          ;; No need to pass acc around, but can't drop it
+                          ;; either (can be side-effectful, like `-rest!').
+                          ;; If it's just `-rest', should be compiled away.
+                          (begin in (loop extra-arg ...))]))]
+                     [-empty?
+                      (syntax-rules () [(_) (not (has-next? acc))])]
+                     [-first
+                      (syntax-rules () [(_) (next acc)])]
+                     [-rest
+                      (syntax-rules () [(_) acc])]
+                     [-rest!
+                      (syntax-rules () [(_) (begin (next acc) acc)])])
+                    body-1-coll))))]
              [else
               ;; TODO are the structural / stateful combinations interesting?
               (unless (or (can-do-structural-traversal? c)
@@ -341,42 +357,55 @@
             (define stateful-builder
               (if structural-building? #f (make-builder c)))
 
-            (let loop ([its iterator-likes] extra-acc ...)
-              (syntax-parameterize
-               ([-loop
-                 (make-rename-transformer #'loop)]
-                [-empty?
-                 (syntax-rules ()
-                   [(_)
-                    (and (r:ormap mt? its structural?) ; any empty?
-                         (or (r:andmap mt? its structural?) ; all empty?
-                             (error "all collections must have same size")))])]
-                [-first
-                 (syntax-rules ()
-                   [(_)
-                    (for/list ([it (in-list its)]
-                               [s? (in-list structural?)])
-                      (if s? (first it) (next it)))])]
-                [-rest
-                 (syntax-rules ()
-                   [(_)
-                    (for/list ([it (in-list its)]
-                               [s? (in-list structural?)])
-                      (if s? (rest it) it))])] ; already stepped
-                [-cons
-                 (syntax-rules ()
-                   [(_ x xs)
-                    (if structural-building?
-                        (cons x xs)
-                        (begin (add-next x stateful-builder)
-                               xs))])]
-                [-done
-                 (syntax-rules ()
-                   [(_)
-                    (if structural-building?
-                        (make-empty c)
-                        (finalize stateful-builder))])])
-               body-n-colls)))))
+            (syntax-parameterize
+             ([-cons
+               (syntax-rules ()
+                 [(_ x xs)
+                  (if structural-building?
+                      (cons x xs)
+                      (begin (add-next x stateful-builder)
+                             xs))])]
+              [-base
+               (syntax-rules ()
+                 [(_)
+                  (if structural-building?
+                      (make-empty c)
+                      (finalize stateful-builder))])]
+              [-init
+               (syntax-rules ()
+                 [(_)
+                  (if structural-building?
+                      (make-empty c)
+                      builder)])]
+              [-done
+               (syntax-rules ()
+                 [(_ x)
+                  (if structural-building?
+                      x
+                      (finalize x))])])
+             (let loop ([its iterator-likes] extra-acc ...)
+               (syntax-parameterize
+                ([-loop
+                  (make-rename-transformer #'loop)]
+                 [-empty?
+                  (syntax-rules ()
+                    [(_)
+                     (and (r:ormap mt? its structural?) ; any empty?
+                          (or (r:andmap mt? its structural?) ; all empty?
+                              (error "all collections must have same size")))])]
+                 [-first
+                  (syntax-rules ()
+                    [(_)
+                     (for/list ([it (in-list its)]
+                                [s? (in-list structural?)])
+                       (if s? (first it) (next it)))])]
+                 [-rest
+                  (syntax-rules ()
+                    [(_)
+                     (for/list ([it (in-list its)]
+                                [s? (in-list structural?)])
+                       (if s? (rest it) it))])]) ; already stepped
+                body-n-colls))))))
 
        (cond
         [(and (syntax->datum #'body-1-coll)
@@ -397,22 +426,31 @@
   (transducer
    (f) ()
    (if (-empty?)
-       (-done)
+       (-base)
        (-cons (f (-first)) (-loop (-rest))))
    (if (-empty?)
-       (-done)
+       (-base)
        (-cons (apply f (-first)) (-loop (-rest))))))
 
 (define fallback-filter
   (transducer
    (f) ()
    (if (-empty?)
-       (-done)
+       (-base)
        (let ([elt (-first)])
          (if (f elt)
              (-cons elt (-loop (-rest)))
              (-loop (-rest)))))
    #f))
+
+(define fallback-reverse
+  (transducer
+   () ([acc (-init)])
+   (if (-empty?)
+       (-done acc)
+       (-loop (-rest) (-cons (-first) acc)))
+   #f))
+;; TODO test a n-ary reverse-like thing (reverse itself makes no sense n-ary)
 
 
 ;;;---------------------------------------------------------------------------
@@ -479,6 +517,7 @@
   ;; Transducers
   [map f collection . cs]
   [filter f collection]
+  [reverse collection]
   ;; TODO others
 
   #:defined-predicate collection-implements?
@@ -495,8 +534,9 @@
    (define build  fallback-build)
 
    ;; Derived transducers, need both a way to traverse and a way to build
-   (define map    fallback-map)
-   (define filter fallback-filter)
+   (define map     fallback-map)
+   (define filter  fallback-filter)
+   (define reverse fallback-reverse)
    ]
   ;; TODO add defaults (lists, vectors, etc.)
   )
@@ -576,6 +616,8 @@
                          (kons-list '(5 6 7))
                          (kons-list '(11 12 13)))
                   '(2 7 13 (1 6 12 (0 5 11 x))))
+    
+    (check-equal? (reverse (kons-list '(1 2 3))) (kons-list '(3 2 1)))
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -628,6 +670,9 @@
     (check-equal? (map + (kons-list/length 4 '(1 2 3 4))
                        (kons-list '(2 3 4 5)))
                   (kons-list/length 4 '(3 5 7 9)))
+
+    (check-equal? (reverse (kons-list/length 3 '(1 2 3)))
+                  (kons-list/length 3 '(3 2 1)))
     ))
 
 (struct not-really-a-collection ()
@@ -659,7 +704,7 @@
         [(define (add-next x v)
            (set-vektor-builder-l! v (r:cons x (vektor-builder-l v))))
          (define (finalize v)
-           (vektor (list->vector (reverse (vektor-builder-l v)))))])
+           (vektor (list->vector (r:reverse (vektor-builder-l v)))))])
 
 (module+ test
   (let ()
@@ -701,4 +746,6 @@
                          (kons-list '(5 6 7))
                          (vektor '#(11 12 13)))
                   '(2 7 13 (1 6 12 (0 5 11 x))))
+
+    (check-equal? (reverse (vektor '#(1 2 3))) (vektor '#(3 2 1)))
     ))
