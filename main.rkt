@@ -209,6 +209,17 @@
 
 (define-syntax-parameter -base (syntax-rules ()))
 
+(define-syntax-rule (with-structural-building (c) body)
+  (syntax-parameterize
+   ([-base (syntax-rules () [(_) (make-empty c)])])
+   body))
+
+(define-syntax-rule (with-stateful-building (c) body)
+  (let ([builder (make-builder c)])
+    (syntax-parameterize
+     ([-base (syntax-rules () [(_) builder])])
+     (begin body (finalize builder)))))
+
 (define-syntax (building stx)
   (syntax-case stx ()
     [(_ (non-coll-args ...)
@@ -219,22 +230,19 @@
        (lambda (c non-coll-args ...)
          (cond
           [(can-do-structural-building? c)
-           (syntax-parameterize
-            ([-base (syntax-rules () [(_) (make-empty c)])])
+           (with-structural-building
+            (c)
             (let loop (extra-acc-structural ...)
               (syntax-parameterize
                ([-loop (make-rename-transformer #'loop)])
                body-structural)))]
           [(can-do-stateful-building? c)
-           (let ([builder (make-builder c)])
-             (syntax-parameterize
-              ([-base (syntax-rules () [(_) builder])])
-              (begin
-                (let loop (extra-acc-stateful ...)
-                  (syntax-parameterize
-                   ([-loop (make-rename-transformer #'loop)])
-                   body-stateful))
-                (finalize builder))))]
+           (with-stateful-building
+            (c)
+            (let loop (extra-acc-stateful ...)
+              (syntax-parameterize
+               ([-loop (make-rename-transformer #'loop)])
+               body-stateful)))]
           [else
            (error "cannot build collection" c)])))]))
 
@@ -284,25 +292,21 @@
             (cond
              [(and (can-do-structural-traversal? c)
                    (can-do-structural-building? c))
-              (syntax-parameterize
-               ([-base
-                 (syntax-rules () [(_) (make-empty c)])])
+              (with-structural-building
+               (c)
                (let loop ([acc c] extra-acc-structural ...)
                  (with-structural-traversal-parameters
                   (loop acc)
                   body-1-coll-structural)))]
              [(and (can-do-stateful-traversal? c)
                    (can-do-stateful-building? c))
-              (let ([acc (make-iterator c)] [builder (make-builder c)])
-                (syntax-parameterize
-                 ([-base
-                   (syntax-rules () [(_) builder])])
-                 (begin
-                   (let loop (extra-acc-stateful ...)
-                     (with-stateful-traversal-parameters
-                      (loop acc)
-                      body-1-coll-stateful))
-                   (finalize builder))))]
+              (let ([acc (make-iterator c)])
+                (with-stateful-building
+                 (c)
+                 (let loop (extra-acc-stateful ...)
+                   (with-stateful-traversal-parameters
+                    (loop acc)
+                    body-1-coll-stateful))))]
              [else
               ;; TODO are the structural / stateful combinations interesting?
               (unless (or (can-do-structural-traversal? c)
@@ -327,21 +331,18 @@
             (with-n-ary-traversal-preamble
              (colls structural? iterator-likes)
              (if (can-do-structural-building? c)
-                 (syntax-parameterize
-                  ([-base (syntax-rules () [(_) (make-empty c)])])
+                 (with-structural-building
+                  (c)
                   (let loop ([its iterator-likes] extra-acc-structural ...)
                     (with-n-ary-traversal-parameters
                      (loop its structural?)
                      body-n-colls-structural)))
-                 (let ([stateful-builder (make-builder c)])
-                   (syntax-parameterize
-                    ([-base (syntax-rules () [(_) stateful-builder])])
-                    (begin
-                      (let loop ([its iterator-likes] extra-acc-stateful ...)
-                        (with-n-ary-traversal-parameters
-                         (loop its structural?)
-                         body-n-colls-stateful))
-                      (finalize stateful-builder)))))))))
+                 (with-stateful-building
+                  (c)
+                  (let loop ([its iterator-likes] extra-acc-stateful ...)
+                    (with-n-ary-traversal-parameters
+                     (loop its structural?)
+                     body-n-colls-stateful))))))))
 
        (cond
         [(and (syntax->datum #'body-1-coll-structural)
