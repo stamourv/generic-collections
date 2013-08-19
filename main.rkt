@@ -237,6 +237,17 @@
           [else
            (error "cannot build collection" c)])))]))
 
+;; User-facing `range', only optionally takes a collection to dispatch on,
+;; defaults to lists. Overriding methods have a different signature, which
+;; may be confusing. Document adequately.
+;; TODO do other builders too
+(provide (rename-out [range/export range]))
+(define (range/export #:collection [c #f] . args)
+  ;; TODO raise proper arity errors
+  (if c
+      (apply range c args)
+      (apply l:range args)))
+
 (define fallback-range
   (case-lambda
     [(c end)
@@ -454,10 +465,10 @@
   [make-builder collection] ; returns a gen:builder
 
   ;; Derived building
-  ;; TODO ugh, kind of ugly to take a dummy coll. as arg...
-  ;;  need something to dispatch on. maybe also offer monomorphic versions
-  ;;  OR have collection be an opt/kw arg and default to lists
-  ;;  OR have the option to pass in empty (or maybe make-empty) and cons
+  ;; These need a collection to dispatch on, which is a bit clunky.
+  ;; User-facing versions do not and default to lists. That does mean
+  ;; that the main function and methods have different signatures, which
+  ;; may be confusing.
   [range collection x [y] [z]]
   [make  collection n v] ; think make-list
   [build collection n f] ; think build-list
@@ -742,4 +753,30 @@
     (check-equal? (reverse (vektor '#(1 2 3))) (vektor '#(3 2 1)))
     (check-equal? (n-ary-reverse (vektor '#(1 2 3)) (kons-list '(4 5 6)))
                   (vektor '#((3 6) (2 5) (1 4))))
+    ))
+
+(struct range-struct (min max) #:transparent
+        #:methods gen:collection
+        ;; make sure that this is overridden, even when calling range/export
+        [(define/generic generic-build build)
+         (define (range c n [m #f] [step #f])
+           ;; not a complete or correct implementation
+           (generic-build (kons-list '())
+                          (- (range-struct-max c) (range-struct-min c))
+                          (lambda (x) (+ x (range-struct-min c)))))])
+
+(module+ test
+  (let ()
+    (check-equal? (range (range-struct 4 6) #f) (kons-list '(4 5)))
+    (check-equal? (range/export #:collection (range-struct 4 6) #f)
+                  (kons-list '(4 5)))
+    (check-equal? (range/export 4) '(0 1 2 3))
+    (check-equal? (range/export 4 6) '(4 5))
+    (check-equal? (range/export 4 -2 -2) '(4 2 0))
+    (check-equal? (range/export #:collection (kons-list '()) 4)
+                  (kons-list '(0 1 2 3)))
+    (check-equal? (range/export #:collection (kons-list '()) 4 6)
+                  (kons-list '(4 5)))
+    (check-equal? (range/export #:collection (kons-list '()) 4 -2 -2)
+                  (kons-list '(4 2 0)))
     ))
