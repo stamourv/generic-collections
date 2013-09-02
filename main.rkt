@@ -516,15 +516,27 @@
     (define rest       l:rest)
     ;; no stateful traversal
     (define length     r:length)
-    (define foldr      r:foldr)
-    (define foldl      r:foldl)
-    (define make-empty (lambda () l:empty))
+    (define foldr      (lambda (f base . ls)
+                         (if (r:andmap list? ls)
+                             (apply r:foldr f base ls) ; homogeneous case
+                             ;; heterogeneous case, use fallback
+                             (apply fallback-foldr f base ls))))
+    (define foldl      (lambda (f base . ls)
+                         (if (r:andmap list? ls)
+                             (apply r:foldl f base ls) ; homogeneous case
+                             ;; heterogeneous case, use fallback
+                             (apply fallback-foldl f base ls))))
+    (define make-empty (lambda (_) l:empty))
     (define cons       r:cons)
     ;; no stateful building
     (define range      l:range)
     (define make       make-list)
     (define build      build-list)
-    (define map        r:map)
+    (define map        (lambda (f . ls)
+                         (if (r:andmap list? ls)
+                             (apply r:map f ls) ; homogeneous case
+                             ;; heterogeneous case, use fallback
+                             (apply fallback-map f ls))))
     (define filter     r:filter)
     (define reverse    r:reverse)
     ])
@@ -820,4 +832,13 @@
     ;; tests for #:defaults
     (check-equal? (foldr + 0 '(1 2 3 4)) 10)
     (check-equal? (foldl + 0 '(1 2 3 4)) 10)
+    (check-equal? (map + '(1 2 3) '(4 5 6)) '(5 7 9))
+    (check-equal? (foldr + 0 '(1 2 3 4) '(5 6 7 8)) 36)
+    (check-equal? (foldl + 0 '(1 2 3 4) '(5 6 7 8)) 36)
+    (check-equal? (map + '(1 2 3) (kons-list '(4 5 6))) '(5 7 9))
+    (check-equal? (foldr + 0 '(1 2 3 4) (kons-list '(5 6 7 8))) 36)
+    (check-equal? (foldl + 0 '(1 2 3 4) (kons-list '(5 6 7 8))) 36)
+    (check-equal? (map + (kons-list '(4 5 6)) '(1 2 3)) (kons-list '(5 7 9)))
+    (check-equal? (foldr + 0 (kons-list '(5 6 7 8)) '(1 2 3 4)) 36)
+    (check-equal? (foldl + 0 (kons-list '(5 6 7 8)) '(1 2 3 4)) 36)
     ))
