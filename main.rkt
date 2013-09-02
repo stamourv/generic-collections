@@ -523,9 +523,9 @@
    (define reverse fallback-reverse)
    ]
 
-  ;; TODO add more defaults (hashes, etc.)
-  #:defaults
-  ([list? ; TODO have this be a #:fast-defaults
+  
+  #:fast-defaults
+  ([list?
     (define empty?     l:empty?)
     (define first      l:first)
     (define rest       l:rest)
@@ -554,9 +554,10 @@
                              (apply fallback-map f ls))))
     (define filter     r:filter)
     (define reverse    r:reverse)
-    ]
-
-   [vector?
+    ])
+  ;; TODO add more defaults (hashes, etc.)
+  #:defaults
+  ([vector?
     ;; no structural traversal
     (struct vector-iterator (v i l) #:mutable
             #:methods gen:iterator
