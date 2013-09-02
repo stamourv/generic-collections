@@ -507,7 +507,27 @@
    (define filter  fallback-filter)
    (define reverse fallback-reverse)
    ]
-  ;; TODO add defaults (lists, vectors, etc.)
+
+  ;; TODO add more defaults (vectors, etc.)
+  #:defaults
+  ([list? ; TODO have this be a #:fast-defaults
+    (define empty?     l:empty?)
+    (define first      l:first)
+    (define rest       l:rest)
+    ;; no stateful traversal
+    (define length     r:length)
+    (define foldr      r:foldr)
+    (define foldl      r:foldl)
+    (define make-empty (lambda () l:empty))
+    (define cons       r:cons)
+    ;; no stateful building
+    (define range      l:range)
+    (define make       make-list)
+    (define build      build-list)
+    (define map        r:map)
+    (define filter     r:filter)
+    (define reverse    r:reverse)
+    ])
   )
 
 ;; Interface taken from Java / Scala
@@ -774,6 +794,9 @@
 
 (module+ test
   (let ()
+
+    ;; tests for optional dispatch for builders
+    
     (check-equal? (range (range-struct 4 6) #f) (kons-list '(4 5)))
     (check-equal? (range/export #:collection (range-struct 4 6) #f)
                   (kons-list '(4 5)))
@@ -793,4 +816,8 @@
     (check-equal? (build/export 5 values) '(0 1 2 3 4))
     (check-equal? (build/export #:collection (kons-list '()) 5 values)
                   (kons-list '(0 1 2 3 4)))
+
+    ;; tests for #:defaults
+    (check-equal? (foldr + 0 '(1 2 3 4)) 10)
+    (check-equal? (foldl + 0 '(1 2 3 4)) 10)
     ))
