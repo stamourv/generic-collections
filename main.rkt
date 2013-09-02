@@ -211,6 +211,21 @@
      ([-base (syntax-rules () [(_) builder])])
      (begin body (finalize builder)))))
 
+(define-syntax (define-builder stx)
+  (syntax-case stx ()
+    [(_ [name export-name fallback-name default-name]
+        body)
+     (quasisyntax/loc stx
+       (begin
+         (provide (rename-out [export-name name]))
+         (define fallback-name
+           body)
+         (define (export-name #:collection [c #f] . args)
+           ;; TODO raise proper arity errors
+           (if c
+               (apply name c args)
+               (apply default-name args)))))]))
+
 (define-syntax (building stx)
   (syntax-case stx ()
     [(_ (non-coll-args ...)
@@ -240,15 +255,7 @@
 ;; User-facing `range', only optionally takes a collection to dispatch on,
 ;; defaults to lists. Overriding methods have a different signature, which
 ;; may be confusing. Document adequately.
-;; TODO do other builders too
-(provide (rename-out [range/export range]))
-(define (range/export #:collection [c #f] . args)
-  ;; TODO raise proper arity errors
-  (if c
-      (apply range c args)
-      (apply l:range args)))
-
-(define fallback-range
+(define-builder [range range/export fallback-range l:range]
   (case-lambda
     [(c end)
      ;; Use the fallback so that clients of range don't have to know
@@ -261,7 +268,7 @@
                      (exact-ceiling (/ (- end start) step))
                      (lambda (x) (+ (* x step) start)))]))
 
-(define fallback-make
+(define-builder [make make/export fallback-make make-list]
   (building
    (n v) ([i n] [acc (-base)]) ([i 0])
    (if (= i 0)
@@ -271,7 +278,7 @@
      (add-next v (-base))
      (-loop (add1 i)))))
 
-(define fallback-build
+(define-builder [build build/export fallback-build build-list]
   (building
    (n f) ([i (sub1 n)] [acc (-base)]) ([i 0])
    (if (< i 0)
@@ -779,4 +786,11 @@
                   (kons-list '(4 5)))
     (check-equal? (range/export #:collection (kons-list '()) 4 -2 -2)
                   (kons-list '(4 2 0)))
+
+    (check-equal? (make/export 5 5) '(5 5 5 5 5))
+    (check-equal? (make/export #:collection (kons-list '()) 5 5)
+                  (kons-list '(5 5 5 5 5)))
+    (check-equal? (build/export 5 values) '(0 1 2 3 4))
+    (check-equal? (build/export #:collection (kons-list '()) 5 values)
+                  (kons-list '(0 1 2 3 4)))
     ))
