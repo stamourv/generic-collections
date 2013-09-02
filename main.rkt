@@ -4,6 +4,8 @@
 
 (require racket/stxparam)
 
+;; TODO add exports
+
 ;;;---------------------------------------------------------------------------
 ;;; Fallback implementations
 
@@ -423,7 +425,20 @@
 
 
 ;;;---------------------------------------------------------------------------
-;;; Interface definition
+;;; Interface definitions
+
+;; Interface taken from Java / Scala
+(define-generics iterator
+  [has-next? iterator]
+  [next iterator])
+
+(define-generics builder
+  [add-next x builder]
+  [finalize builder]) ; returns a gen:collection
+;; TODO this only builds "in order", but order is defined by the builder
+;; TODO more efficient building (e.g. if we know the size in advance) can
+;;  be done by overriding derived methods. can we do better?
+
 
 (define-generics collection
   ;; This interface has the following groups of methods:
@@ -508,7 +523,7 @@
    (define reverse fallback-reverse)
    ]
 
-  ;; TODO add more defaults (vectors, etc.)
+  ;; TODO add more defaults (hashes, etc.)
   #:defaults
   ([list? ; TODO have this be a #:fast-defaults
     (define empty?     l:empty?)
@@ -539,21 +554,37 @@
                              (apply fallback-map f ls))))
     (define filter     r:filter)
     (define reverse    r:reverse)
+    ]
+
+   [vector?
+    ;; no structural traversal
+    (struct vector-iterator (v i l) #:mutable
+            #:methods gen:iterator
+            [(define (has-next? v)
+               (< (vector-iterator-i v) (vector-iterator-l v)))
+             (define (next v)
+               (begin0 (vector-ref (vector-iterator-v v) (vector-iterator-i v))
+                 (set-vector-iterator-i! v (add1 (vector-iterator-i v)))))])
+    (define (make-iterator v) (vector-iterator v 0 (vector-length v)))
+    (define length vector-length)
+    ;; no structural building
+    (struct vector-builder (l) #:mutable #:transparent
+            #:methods gen:builder
+            [(define (add-next x v)
+               (set-vector-builder-l! v (r:cons x (vector-builder-l v))))
+             (define (finalize v)
+               (list->vector (r:reverse (vector-builder-l v))))])
+    (define (make-builder _) (vector-builder '()))
+    (define make   make-vector)
+    (define build  build-vector)
+    (define map    (lambda (f . ls)
+                     (if (r:andmap vector? ls)
+                         (apply vector-map f ls) ; homogeneous case
+                         ;; heterogeneous case, use fallback
+                         (apply fallback-map f ls))))
+    (define filter vector-filter)
     ])
   )
-
-;; Interface taken from Java / Scala
-(define-generics iterator
-  [has-next? iterator]
-  [next iterator])
-
-(define-generics builder
-  [add-next x builder]
-  [finalize builder]) ; returns a gen:collection
-;; TODO this only builds "in order", but order is defined by the builder
-;; TODO more efficient building (e.g. if we know the size in advance) can
-;;  be done by overriding derived methods. can we do better?
-
 
 
 ;;;---------------------------------------------------------------------------
@@ -830,6 +861,7 @@
                   (kons-list '(0 1 2 3 4)))
 
     ;; tests for #:defaults
+
     (check-equal? (foldr + 0 '(1 2 3 4)) 10)
     (check-equal? (foldl + 0 '(1 2 3 4)) 10)
     (check-equal? (map + '(1 2 3) '(4 5 6)) '(5 7 9))
@@ -841,4 +873,18 @@
     (check-equal? (map + (kons-list '(4 5 6)) '(1 2 3)) (kons-list '(5 7 9)))
     (check-equal? (foldr + 0 (kons-list '(5 6 7 8)) '(1 2 3 4)) 36)
     (check-equal? (foldl + 0 (kons-list '(5 6 7 8)) '(1 2 3 4)) 36)
+
+    (check-equal? (foldr + 0 '#(1 2 3 4)) 10)
+    (check-equal? (foldl + 0 '#(1 2 3 4)) 10)
+    (check-equal? (map + '#(1 2 3) '#(4 5 6)) '#(5 7 9))
+    (check-equal? (foldr + 0 '#(1 2 3 4) '#(5 6 7 8)) 36)
+    (check-equal? (foldl + 0 '#(1 2 3 4) '#(5 6 7 8)) 36)
+    (check-equal? (map + '#(1 2 3) (kons-list '(4 5 6))) '#(5 7 9))
+    (check-equal? (foldr + 0 '#(1 2 3 4) (kons-list '(5 6 7 8))) 36)
+    (check-equal? (foldl + 0 '#(1 2 3 4) (kons-list '(5 6 7 8))) 36)
+    (check-equal? (map + (kons-list '(4 5 6)) '#(1 2 3)) (kons-list '(5 7 9)))
+    (check-equal? (foldr + 0 (kons-list '(5 6 7 8)) '#(1 2 3 4)) 36)
+    (check-equal? (foldl + 0 (kons-list '(5 6 7 8)) '#(1 2 3 4)) 36)
+    (check-equal? (range '#() 1 10 2) '#(1 3 5 7 9))
+    
     ))
