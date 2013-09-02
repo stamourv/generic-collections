@@ -462,6 +462,12 @@
   ;;   covered by stateful building? (I guess order wouldn't be defined, which
   ;;   is a problem for in-place changes. still, can override methods that
   ;;   traverse in wrong order)
+  ;;  TODO add imperative updates (maybe just a set-at! method + derived?)
+  ;;    in which case, also add a copy operation
+
+  ;; Operations that that n collections as arguments must accept
+  ;; heterogeneous inputs (i.e. most work when given, e.g. a list and a
+  ;; vector).
 
 
   ;; Structural traversal
