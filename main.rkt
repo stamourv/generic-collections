@@ -526,34 +526,35 @@
   
   #:fast-defaults
   ([list?
-    (define empty?     l:empty?)
-    (define first      l:first)
-    (define rest       l:rest)
+    (define empty? l:empty?)
+    (define first  l:first)
+    (define rest   l:rest)
     ;; no stateful traversal
-    (define length     r:length)
-    (define foldr      (lambda (f base . ls)
-                         (if (r:andmap list? ls)
-                             (apply r:foldr f base ls) ; homogeneous case
-                             ;; heterogeneous case, use fallback
-                             (apply fallback-foldr f base ls))))
-    (define foldl      (lambda (f base . ls)
-                         (if (r:andmap list? ls)
-                             (apply r:foldl f base ls) ; homogeneous case
-                             ;; heterogeneous case, use fallback
-                             (apply fallback-foldl f base ls))))
-    (define make-empty (lambda (_) l:empty))
-    (define cons       r:cons)
+    (define length r:length)
+    (define (foldr f base . ls)
+      (if (r:andmap list? ls)
+          (apply r:foldr f base ls) ; homogeneous case
+          ;; heterogeneous case, use fallback
+          (apply fallback-foldr f base ls)))
+    (define (foldl f base . ls)
+      (if (r:andmap list? ls)
+          (apply r:foldl f base ls) ; homogeneous case
+          ;; heterogeneous case, use fallback
+          (apply fallback-foldl f base ls)))
+    (define (make-empty)
+      l:empty)
+    (define cons  r:cons)
     ;; no stateful building
-    (define range      l:range)
-    (define make       make-list)
-    (define build      build-list)
-    (define map        (lambda (f . ls)
-                         (if (r:andmap list? ls)
-                             (apply r:map f ls) ; homogeneous case
-                             ;; heterogeneous case, use fallback
-                             (apply fallback-map f ls))))
-    (define filter     r:filter)
-    (define reverse    r:reverse)
+    (define range l:range)
+    (define make  make-list)
+    (define build build-list)
+    (define (map f . ls)
+      (if (r:andmap list? ls)
+          (apply r:map f ls) ; homogeneous case
+          ;; heterogeneous case, use fallback
+          (apply fallback-map f ls)))
+    (define filter  r:filter)
+    (define reverse r:reverse)
     ])
   ;; TODO add more defaults (hashes, etc.)
   #:defaults
