@@ -2,7 +2,8 @@
 
 ;;; Interface definition (and "documentation") below.
 
-(require racket/stxparam)
+(require racket/stxparam
+         (for-syntax racket/syntax))
 
 ;; TODO add exports
 
@@ -112,39 +113,56 @@
 
 (define (mt? it s?) (if s? (empty? it) (not (has-next? it))))
 
+;; placeholder for the collection argument(s)
+(define-syntax -coll (syntax-rules ()))
+
 (define-syntax (traversal stx)
   (syntax-case stx ()
-    [(_ (non-coll-args ...) (extra-acc ...)
+    [(_ (maybe-coll-args ...) (extra-acc ...)
         body-1-coll
         body-n-colls)
      (let ()
        (define single-collection-part ; just missing the `lambda'
-         (syntax/loc stx
-           ((non-coll-args ... c)
-            (cond
-             [(can-do-structural-traversal? c)
-              (with-structural-traversal
-               (c) (extra-acc ...)
-               body-1-coll)]
-             [(can-do-stateful-traversal? c)
-              (with-stateful-traversal
-               (c) (extra-acc ...)
-               body-1-coll)]
-             [else
-              (error "cannot traverse collection" c)]))))
+         ;; TODO transducer may need something similar
+         (with-syntax* ([c (generate-temporary 'c)]
+                        [(args ...)
+                         (for/list ([a (in-list (syntax->list
+                                                 #'(maybe-coll-args ...)))])
+                           ;; replace placeholder
+                           (if (free-identifier=? a #'-coll) #'c a))])
+           (syntax/loc stx
+             ((args ...)
+              (cond
+               [(can-do-structural-traversal? c)
+                (with-structural-traversal
+                 (c) (extra-acc ...)
+                 body-1-coll)]
+               [(can-do-stateful-traversal? c)
+                (with-stateful-traversal
+                 (c) (extra-acc ...)
+                 body-1-coll)]
+               [else
+                (error "cannot traverse collection" c)])))))
 
        (define multi-collection-part
-         (syntax/loc stx
-           ((non-coll-args ... c . cs)
-            (define colls (r:cons c cs))
-            (unless (for/and ([coll (in-list colls)])
-                      (or (can-do-structural-traversal? coll)
-                          can-do-stateful-traversal? coll))
-              ;; TODO have better error message than that
-              (error "cannot traverse one of" colls))
-            (with-n-ary-traversal
-             (colls) (extra-acc ...)
-             body-n-colls))))
+         (with-syntax ([(args ...)
+                        ;; for n-ary case, collections have to go at the end,
+                        ;; so drop the placeholder
+                        (for/list ([a (in-list (syntax->list
+                                                #'(maybe-coll-args ...)))]
+                                   #:unless (free-identifier=? a #'-coll))
+                          a)])
+           (syntax/loc stx
+             ((args ... c . cs)
+              (define colls (r:cons c cs))
+              (unless (for/and ([coll (in-list colls)])
+                        (or (can-do-structural-traversal? coll)
+                            can-do-stateful-traversal? coll))
+                ;; TODO have better error message than that
+                (error "cannot traverse one of" colls))
+              (with-n-ary-traversal
+               (colls) (extra-acc ...)
+               body-n-colls)))))
 
        (cond
         [(and (syntax->datum #'body-1-coll)
@@ -164,7 +182,7 @@
 
 (define fallback-foldr
   (traversal
-   (f base) ()
+   (f base -coll) ()
    (if (-empty?)
        base
        (f (-first) (-loop (-rest))))
@@ -175,7 +193,7 @@
 
 (define fallback-length
   (traversal
-   () ([n 0])
+   (-coll) ([n 0])
    (if (-empty?)
        n
        (-loop (-rest!) (add1 n)))
@@ -183,7 +201,7 @@
 
 (define fallback-foldl
   (traversal
-   (f base) ([acc base])
+   (f base -coll) ([acc base])
    (if (-empty?)
        acc
        (-loop (-rest) (f (-first) acc)))
@@ -194,7 +212,7 @@
 
 (define fallback-andmap
   (traversal
-   (f) ()
+   (f -coll) ()
    (if (-empty?)
        #t
        (and (f (-first)) (-loop (-rest))))
@@ -204,13 +222,24 @@
 
 (define fallback-ormap
   (traversal
-   (f) ()
+   (f -coll) ()
    (if (-empty?)
        #f
        (or (f (-first)) (-loop (-rest))))
    (if (-empty?)
        #f
        (or (apply f (-first)) (-loop (-rest))))))
+
+(define fallback-ref
+  (traversal
+   (-coll i) ([i i])
+   (cond [(-empty?)
+          (error "index out of range" i)]
+         [(= i 0)
+          (-first)]
+         [else
+          (-loop (-rest!) (sub1 i))])
+   #f))
 
 
 (define (can-do-structural-building? c)
@@ -505,6 +534,9 @@
   [foldl f base collection . cs]
   [andmap f collection . cs]
   [ormap  f collection . cs]
+  ;; This one makes a lot of sense to override for vector-like things.
+  ;; Some derived methods may want to use this instead of iterators.
+  [ref collection i]
 
   ;; Structural building
   [make-empty collection] ; returns a new empty coll. (think `(λ (l) '())')
@@ -532,27 +564,26 @@
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; list-ref, append, for-each, remove (+ remq, remf and co), remove*
-  ;; (+ remq* and co), sort, member (+ memq, memf and co) (or leave that
-  ;; to sets, and have collections be sets?), second, third and co,
-  ;; last, take, drop, split-at, takef, dropf, splitf-at, take-right,
-  ;; drop-right, split-at-right, takef-right, dropf-right,
-  ;; splitf-at-right, add-between, append*, flatten, remove-duplicates,
-  ;; filter-map, count, partition, append-map, filter-not, shuffle,
-  ;; permutations, in-permutations, argmin, argmax, ->list, list->,
-  ;; string-trim, string-replace, string-split, string-join,
-  ;; string-fill!, vector-copy!, vector-copy, vector-set*!, vector-map!,
-  ;; list-prefix?, take-common-prefix, drop-common-prefix,
-  ;; split-common-prefix, filter-multiple, extend, check-duplicate,
-  ;; group-by (change interface as discussed with eli), list-update,
-  ;; list-set, slice (like in-slice), cons* / list*, take!, drop! (and
-  ;; others in that family), append!, append*!, reverse!, zip,
-  ;; unzip[1..5], unfold, unfold-right, append-map!, filter!,
-  ;; partition!, remove!, list-index, list-index-right, substring,
-  ;; string-pad (avoid string-pad-right in the same way as
-  ;; racket/string's string-trim), compare (like string<? and co, but
-  ;; takes a comparison procedure, like sort), sliding window, convolve,
-  ;; rotate
+  ;; append, for-each, remove (+ remq, remf and co), remove* (+ remq*
+  ;; and co), sort, member (+ memq, memf and co) (or leave that to sets,
+  ;; and have collections be sets?), second, third and co, last, take,
+  ;; drop, split-at, takef, dropf, splitf-at, take-right, drop-right,
+  ;; split-at-right, takef-right, dropf-right, splitf-at-right,
+  ;; add-between, append*, flatten, remove-duplicates, filter-map,
+  ;; count, partition, append-map, filter-not, shuffle, permutations,
+  ;; in-permutations, argmin, argmax, ->list, list->, string-trim,
+  ;; string-replace, string-split, string-join, string-fill!,
+  ;; vector-copy!, vector-copy, vector-set*!, vector-map!, list-prefix?,
+  ;; take-common-prefix, drop-common-prefix, split-common-prefix,
+  ;; filter-multiple, extend, check-duplicate, group-by (change
+  ;; interface as discussed with eli), list-update, list-set, slice
+  ;; (like in-slice), cons* / list*, take!, drop! (and others in that
+  ;; family), append!, append*!, reverse!, zip, unzip[1..5], unfold,
+  ;; unfold-right, append-map!, filter!, partition!, remove!,
+  ;; list-index, list-index-right, substring, string-pad (avoid
+  ;; string-pad-right in the same way as racket/string's string-trim),
+  ;; compare (like string<? and co, but takes a comparison procedure,
+  ;; like sort), sliding window, convolve, rotate
 
 
   #:defined-predicate collection-implements?
@@ -564,6 +595,7 @@
    (define foldl  fallback-foldl)
    (define andmap fallback-andmap)
    (define ormap  fallback-ormap)
+   (define ref    fallback-ref)
 
    ;; Derived buildings, depend on either kind of basic building
    (define range  fallback-range)
@@ -606,6 +638,7 @@
           (apply r:ormap f ls) ; homogeneous case
           ;; heterogeneous case, use fallback
           (apply fallback-ormap f ls)))
+    (define ref   r:list-ref)
     (define cons  r:cons)
     ;; no stateful building
     (define range l:range)
@@ -635,6 +668,7 @@
                  (set-vector-iterator-i! v (add1 (vector-iterator-i v)))))])
     (define (make-iterator v) (vector-iterator v 0 (vector-length v)))
     (define length vector-length)
+    (define ref    vector-ref)
     ;; no structural building
     (struct vector-builder (l) #:mutable #:transparent
             #:methods gen:builder
@@ -771,6 +805,9 @@
     (check-equal? (ormap < (kons-list '(1 2 3)) (kons-list '(0 0 0))) #f)
     (check-equal? (ormap < (kons-list '(1 2 3)) '(0 1 6)) #t)
     (check-equal? (ormap < (kons-list '(1 2 3)) '(0 0 0)) #f)
+
+    (check-equal? (ref (kons-list '(1 2 3)) 0) 1)
+    (check-equal? (ref (kons-list '(1 2 3)) 2) 3)
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -916,6 +953,9 @@
     (check-equal? (ormap < (vektor '#(1 2 3)) (vektor '#(0 0 0))) #f)
     (check-equal? (ormap < (vektor '#(1 2 3)) '(0 1 6)) #t)
     (check-equal? (ormap < (vektor '#(1 2 3)) '(0 0 0)) #f)
+
+    (check-equal? (ref (vektor '#(1 2 3)) 0) 1)
+    (check-equal? (ref (vektor '#(1 2 3)) 2) 3)
     ))
 
 (struct range-struct (min max) #:transparent
