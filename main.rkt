@@ -482,7 +482,6 @@
   [length collection]
   [foldr f base collection . cs]
   [foldl f base collection . cs]
-  ;; TODO others
 
   ;; Structural building
   [make-empty collection] ; returns a new empty coll. (think `(λ (l) '())')
@@ -500,15 +499,38 @@
   [range collection x [y] [z]]
   [make  collection n v] ; think make-list
   [build collection n f] ; think build-list
-  ;; TODO unfold
   ;; TODO test overrides for these
-  ;; TODO others
 
   ;; Transducers
   [map f collection . cs]
   [filter f collection]
   [reverse collection]
-  ;; TODO others
+
+  ;; TODO other operations (from racket/base, racket/list, racket/string
+  ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
+
+  ;; list-ref, list-tail, append, andmap, ormap, for-each, remove (+
+  ;; remq, remf and co), remove* (+ remq* and co), sort, member (+ memq,
+  ;; memf and co) (or leave that to sets, and have collections be
+  ;; sets?), second, third and co, last, take, drop, split-at, takef,
+  ;; dropf, splitf-at, take-right, drop-right, split-at-right,
+  ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
+  ;; flatten, remove-duplicates, filter-map, count, partition,
+  ;; append-map, filter-not, shuffle, permutations, in-permutations,
+  ;; argmin, argmax, ->list, list->, string-trim, string-replace,
+  ;; string-split, string-join, string-fill!, vector-copy!, vector-copy,
+  ;; vector-set*!, vector-map!, list-prefix?, take-common-prefix,
+  ;; drop-common-prefix, split-common-prefix, filter-multiple, extend,
+  ;; check-duplicate, group-by (change interface as discussed with eli),
+  ;; list-update, list-set, slice (like in-slice), cons* / list*, take!,
+  ;; drop! (and others in that family), append!, append*!, reverse!,
+  ;; zip, unzip[1..5], unfold, unfold-right, append-map!, filter!,
+  ;; partition!, remove!, list-index, list-index-right, substring,
+  ;; string-pad (avoid string-pad-right in the same way as
+  ;; racket/string's string-trim), compare (like string<? and co, but
+  ;; takes a comparison procedure, like sort), sliding window, convolve,
+  ;; rotate
+
 
   #:defined-predicate collection-implements?
   #:fallbacks
@@ -562,7 +584,10 @@
     (define filter  r:filter)
     (define reverse r:reverse)
     ])
-  ;; TODO add more defaults (hashes, etc.)
+
+  ;; TODO add more defaults (hashes, strings, bytes, ports?, sequences,
+  ;;  streams, uniform vectors, math/array, dicts, sets, mlists,
+  ;;  integers?, etc.)
   #:defaults
   ([vector?
     ;; no structural traversal
