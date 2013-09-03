@@ -532,11 +532,11 @@
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; list-ref, list-tail, append, for-each, remove (+ remq, remf and
-  ;; co), remove* (+ remq* and co), sort, member (+ memq, memf and co)
-  ;; (or leave that to sets, and have collections be sets?), second,
-  ;; third and co, last, take, drop, split-at, takef, dropf, splitf-at,
-  ;; take-right, drop-right, split-at-right, takef-right, dropf-right,
+  ;; list-ref, append, for-each, remove (+ remq, remf and co), remove*
+  ;; (+ remq* and co), sort, member (+ memq, memf and co) (or leave that
+  ;; to sets, and have collections be sets?), second, third and co,
+  ;; last, take, drop, split-at, takef, dropf, splitf-at, take-right,
+  ;; drop-right, split-at-right, takef-right, dropf-right,
   ;; splitf-at-right, add-between, append*, flatten, remove-duplicates,
   ;; filter-map, count, partition, append-map, filter-not, shuffle,
   ;; permutations, in-permutations, argmin, argmax, ->list, list->,
