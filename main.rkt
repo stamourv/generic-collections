@@ -258,9 +258,10 @@
        (begin (apply f (-first))
               (-loop (-rest))))))
 
+(define member?-error-thunk (lambda () (error "member?: element not found")))
 (define fallback-member?
   (traversal
-   (x -coll #:equal? [=? equal?] [fail #f]) ()
+   (x -coll #:equal? [=? equal?] [fail member?-error-thunk]) ()
    (if (-empty?)
        (if (procedure? fail) (fail) fail)
        (let ([y (-first)])
@@ -671,7 +672,7 @@
     (define ref      r:list-ref)
     (define for-each r:for-each)
     ;; stock member is not the same
-    (define (member? x l #:equal? [=? equal?] [fail #f])
+    (define (member? x l #:equal? [=? equal?] [fail member?-error-thunk])
       (define res (r:member x l =?))
       (cond [res               (l:first res)]
             [(procedure? fail) (fail)]
@@ -852,7 +853,8 @@
                   "123")
 
     (check-equal? (member? 3 (kons-list '(1 2 3))) 3)
-    (check-equal? (member? 4 (kons-list '(1 2 3))) #f)
+    (check-exn #rx"element not found"
+               (lambda () (member? 4 (kons-list '(1 2 3)))))
     (check-equal? (member? 3 (kons-list '(1 2 3)) #:equal? =) 3)
     (check-equal? (member? 4 (kons-list '(1 2 3)) #:equal? (lambda _ #t)) 1)
     (check-equal? (member? 4 (kons-list '(1 2 3)) 'fail) 'fail)
@@ -1015,7 +1017,8 @@
                   "111")
 
     (check-equal? (member? 3 (vektor '#(1 2 3))) 3)
-    (check-equal? (member? 4 (vektor '#(1 2 3))) #f)
+    (check-exn #rx"element not found"
+               (lambda () (member? 4 (vektor '#(1 2 3)))))
     (check-equal? (member? 3 (vektor '#(1 2 3)) #:equal? =) 3)
     (check-equal? (member? 4 (vektor '#(1 2 3)) #:equal? (lambda _ #t)) 1)
     (check-equal? (member? 4 (vektor '#(1 2 3)) 'fail) 'fail)
@@ -1085,14 +1088,16 @@
     (check-equal? (range '#() 1 10 2) '#(1 3 5 7 9))
 
     (check-equal? (member? 3 '(1 2 3)) 3)
-    (check-equal? (member? 4 '(1 2 3)) #f)
+    (check-exn #rx"element not found"
+               (lambda () (member? 4 '(1 2 3))))
     (check-equal? (member? 3 '(1 2 3) #:equal? =) 3)
     (check-equal? (member? 4 '(1 2 3) #:equal? (lambda _ #t)) 1)
     (check-equal? (member? 4 '(1 2 3) 'fail) 'fail)
     (check-equal? (member? 4 '(1 2 3) (lambda () 'fail)) 'fail)
 
     (check-equal? (member? 3 '#(1 2 3)) 3)
-    (check-equal? (member? 4 '#(1 2 3)) #f)
+    (check-exn #rx"element not found"
+               (lambda () (member? 4 '#(1 2 3))))
     (check-equal? (member? 3 '#(1 2 3) #:equal? =) 3)
     (check-equal? (member? 4 '#(1 2 3) #:equal? (lambda _ #t)) 1)
     (check-equal? (member? 4 '#(1 2 3) 'fail) 'fail)
