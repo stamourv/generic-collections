@@ -569,7 +569,7 @@
           (apply r:foldl f base ls) ; homogeneous case
           ;; heterogeneous case, use fallback
           (apply fallback-foldl f base ls)))
-    (define (make-empty)
+    (define (make-empty _)
       l:empty)
     (define cons  r:cons)
     ;; no stateful building
