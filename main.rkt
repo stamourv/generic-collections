@@ -129,7 +129,10 @@
                          (for/list ([a (in-list (syntax->list
                                                  #'(maybe-coll-args ...)))])
                            ;; replace placeholder
-                           (if (free-identifier=? a #'-coll) #'c a))])
+                           (if (and (identifier? a) ; can be a kw or optional
+                                    (free-identifier=? a #'-coll))
+                               #'c
+                               a))])
            (syntax/loc stx
              ((args ...)
               (cond
@@ -150,7 +153,9 @@
                         ;; so drop the placeholder
                         (for/list ([a (in-list (syntax->list
                                                 #'(maybe-coll-args ...)))]
-                                   #:unless (free-identifier=? a #'-coll))
+                                   #:unless
+                                   (and (identifier? a)
+                                        (free-identifier=? a #'-coll)))
                           a)])
            (syntax/loc stx
              ((args ... c . cs)
@@ -252,6 +257,17 @@
        (void)
        (begin (apply f (-first))
               (-loop (-rest))))))
+
+(define fallback-member?
+  (traversal
+   (x -coll #:equal? [=? equal?] [fail #f]) ()
+   (if (-empty?)
+       (if (procedure? fail) (fail) fail)
+       (let ([y (-first)])
+         (if (=? x y)
+             y
+             (-loop (-rest)))))
+   #f))
 
 
 (define (can-do-structural-building? c)
@@ -550,6 +566,8 @@
   ;; Some derived methods may want to use this instead of iterators.
   [ref collection i]
   [for-each f collection . cs]
+  ;; TODO leave member? to sets?
+  [member? x collection #:equal? [=] [failure-result/thunk]]
 
   ;; Structural building
   [make-empty collection] ; returns a new empty coll. (think `(λ (l) '())')
@@ -578,25 +596,24 @@
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
   ;; append, remove (+ remq, remf and co), remove* (+ remq* and co),
-  ;; sort, member (+ memq, memf and co) (or leave that to sets, and have
-  ;; collections be sets?), second, third and co, last, take, drop,
-  ;; split-at, takef, dropf, splitf-at, take-right, drop-right,
-  ;; split-at-right, takef-right, dropf-right, splitf-at-right,
-  ;; add-between, append*, flatten, remove-duplicates, filter-map,
-  ;; count, partition, append-map, filter-not, shuffle, permutations,
-  ;; in-permutations, argmin, argmax, ->list, list->, string-trim,
-  ;; string-replace, string-split, string-join, string-fill!,
-  ;; vector-copy!, vector-copy, vector-set*!, vector-map!, list-prefix?,
-  ;; take-common-prefix, drop-common-prefix, split-common-prefix,
-  ;; filter-multiple, extend, check-duplicate, group-by (change
-  ;; interface as discussed with eli), list-update, list-set, slice
-  ;; (like in-slice), cons* / list*, take!, drop! (and others in that
-  ;; family), append!, append*!, reverse!, zip, unzip[1..5], unfold,
-  ;; unfold-right, append-map!, filter!, partition!, remove!,
-  ;; list-index, list-index-right, substring, string-pad (avoid
-  ;; string-pad-right in the same way as racket/string's string-trim),
-  ;; compare (like string<? and co, but takes a comparison procedure,
-  ;; like sort), sliding window, convolve, rotate
+  ;; sort, second, third and co, last, take, drop, split-at, takef,
+  ;; dropf, splitf-at, take-right, drop-right, split-at-right,
+  ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
+  ;; flatten, remove-duplicates, filter-map, count, partition,
+  ;; append-map, filter-not, shuffle, permutations, in-permutations,
+  ;; argmin, argmax, ->list, list->, string-trim, string-replace,
+  ;; string-split, string-join, string-fill!, vector-copy!, vector-copy,
+  ;; vector-set*!, vector-map!, list-prefix?, take-common-prefix,
+  ;; drop-common-prefix, split-common-prefix, filter-multiple, extend,
+  ;; check-duplicate, group-by (change interface as discussed with eli),
+  ;; list-update, list-set, slice (like in-slice), cons* / list*, take!,
+  ;; drop! (and others in that family), append!, append*!, reverse!,
+  ;; zip, unzip[1..5], unfold, unfold-right, append-map!, filter!,
+  ;; partition!, remove!, list-index, list-index-right, substring,
+  ;; string-pad (avoid string-pad-right in the same way as
+  ;; racket/string's string-trim), compare (like string<? and co, but
+  ;; takes a comparison procedure, like sort), sliding window, convolve,
+  ;; rotate
 
 
   #:defined-predicate collection-implements?
@@ -610,6 +627,7 @@
    (define ormap    fallback-ormap)
    (define ref      fallback-ref)
    (define for-each fallback-for-each)
+   (define member?  fallback-member?)
 
    ;; Derived buildings, depend on either kind of basic building
    (define range  fallback-range)
@@ -640,8 +658,6 @@
           (apply r:foldl f base ls) ; homogeneous case
           ;; heterogeneous case, use fallback
           (apply fallback-foldl f base ls)))
-    (define (make-empty _)
-      l:empty)
     (define (andmap f . ls)
       (if (r:andmap list? ls)
           (apply r:andmap f ls) ; homogeneous case
@@ -654,6 +670,14 @@
           (apply fallback-ormap f ls)))
     (define ref      r:list-ref)
     (define for-each r:for-each)
+    ;; stock member is not the same
+    (define (member? x l #:equal? [=? equal?] [fail #f])
+      (define res (r:member x l =?))
+      (cond [res               (l:first res)]
+            [(procedure? fail) (fail)]
+            [else              fail]))
+    (define (make-empty _)
+      l:empty)
     (define cons     r:cons)
     ;; no stateful building
     (define range l:range)
@@ -826,6 +850,13 @@
     (check-equal? (with-output-to-string
                     (lambda () (for-each display (kons-list '(1 2 3)))))
                   "123")
+
+    (check-equal? (member? 3 (kons-list '(1 2 3))) 3)
+    (check-equal? (member? 4 (kons-list '(1 2 3))) #f)
+    (check-equal? (member? 3 (kons-list '(1 2 3)) #:equal? =) 3)
+    (check-equal? (member? 4 (kons-list '(1 2 3)) #:equal? (lambda _ #t)) 1)
+    (check-equal? (member? 4 (kons-list '(1 2 3)) 'fail) 'fail)
+    (check-equal? (member? 4 (kons-list '(1 2 3)) (lambda () 'fail)) 'fail)
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -982,6 +1013,13 @@
                                          (kons-list '(1 2 3))
                                          (kons-list '(0 1 2)))))
                   "111")
+
+    (check-equal? (member? 3 (vektor '#(1 2 3))) 3)
+    (check-equal? (member? 4 (vektor '#(1 2 3))) #f)
+    (check-equal? (member? 3 (vektor '#(1 2 3)) #:equal? =) 3)
+    (check-equal? (member? 4 (vektor '#(1 2 3)) #:equal? (lambda _ #t)) 1)
+    (check-equal? (member? 4 (vektor '#(1 2 3)) 'fail) 'fail)
+    (check-equal? (member? 4 (vektor '#(1 2 3)) (lambda () 'fail)) 'fail)
     ))
 
 (struct range-struct (min max) #:transparent
@@ -1045,5 +1083,19 @@
     (check-equal? (foldr + 0 (kons-list '(5 6 7 8)) '#(1 2 3 4)) 36)
     (check-equal? (foldl + 0 (kons-list '(5 6 7 8)) '#(1 2 3 4)) 36)
     (check-equal? (range '#() 1 10 2) '#(1 3 5 7 9))
-    
+
+    (check-equal? (member? 3 '(1 2 3)) 3)
+    (check-equal? (member? 4 '(1 2 3)) #f)
+    (check-equal? (member? 3 '(1 2 3) #:equal? =) 3)
+    (check-equal? (member? 4 '(1 2 3) #:equal? (lambda _ #t)) 1)
+    (check-equal? (member? 4 '(1 2 3) 'fail) 'fail)
+    (check-equal? (member? 4 '(1 2 3) (lambda () 'fail)) 'fail)
+
+    (check-equal? (member? 3 '#(1 2 3)) 3)
+    (check-equal? (member? 4 '#(1 2 3)) #f)
+    (check-equal? (member? 3 '#(1 2 3) #:equal? =) 3)
+    (check-equal? (member? 4 '#(1 2 3) #:equal? (lambda _ #t)) 1)
+    (check-equal? (member? 4 '#(1 2 3) 'fail) 'fail)
+    (check-equal? (member? 4 '#(1 2 3) (lambda () 'fail)) 'fail)
+
     ))
