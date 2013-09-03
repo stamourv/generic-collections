@@ -241,6 +241,18 @@
           (-loop (-rest!) (sub1 i))])
    #f))
 
+(define fallback-for-each
+  (traversal
+   (f -coll) ()
+   (if (-empty?)
+       (void)
+       (begin (f (-first))
+              (-loop (-rest))))
+   (if (-empty?)
+       (void)
+       (begin (apply f (-first))
+              (-loop (-rest))))))
+
 
 (define (can-do-structural-building? c)
   (and (collection-implements? c 'make-empty)
@@ -537,6 +549,7 @@
   ;; This one makes a lot of sense to override for vector-like things.
   ;; Some derived methods may want to use this instead of iterators.
   [ref collection i]
+  [for-each f collection . cs]
 
   ;; Structural building
   [make-empty collection] ; returns a new empty coll. (think `(λ (l) '())')
@@ -564,10 +577,10 @@
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; append, for-each, remove (+ remq, remf and co), remove* (+ remq*
-  ;; and co), sort, member (+ memq, memf and co) (or leave that to sets,
-  ;; and have collections be sets?), second, third and co, last, take,
-  ;; drop, split-at, takef, dropf, splitf-at, take-right, drop-right,
+  ;; append, remove (+ remq, remf and co), remove* (+ remq* and co),
+  ;; sort, member (+ memq, memf and co) (or leave that to sets, and have
+  ;; collections be sets?), second, third and co, last, take, drop,
+  ;; split-at, takef, dropf, splitf-at, take-right, drop-right,
   ;; split-at-right, takef-right, dropf-right, splitf-at-right,
   ;; add-between, append*, flatten, remove-duplicates, filter-map,
   ;; count, partition, append-map, filter-not, shuffle, permutations,
@@ -590,12 +603,13 @@
   #:fallbacks
   [
    ;; Derived traversals, depend on either kind of basic traversals
-   (define length fallback-length)
-   (define foldr  fallback-foldr)
-   (define foldl  fallback-foldl)
-   (define andmap fallback-andmap)
-   (define ormap  fallback-ormap)
-   (define ref    fallback-ref)
+   (define length   fallback-length)
+   (define foldr    fallback-foldr)
+   (define foldl    fallback-foldl)
+   (define andmap   fallback-andmap)
+   (define ormap    fallback-ormap)
+   (define ref      fallback-ref)
+   (define for-each fallback-for-each)
 
    ;; Derived buildings, depend on either kind of basic building
    (define range  fallback-range)
@@ -638,8 +652,9 @@
           (apply r:ormap f ls) ; homogeneous case
           ;; heterogeneous case, use fallback
           (apply fallback-ormap f ls)))
-    (define ref   r:list-ref)
-    (define cons  r:cons)
+    (define ref      r:list-ref)
+    (define for-each r:for-each)
+    (define cons     r:cons)
     ;; no stateful building
     (define range l:range)
     (define make  make-list)
@@ -667,8 +682,8 @@
                (begin0 (vector-ref (vector-iterator-v v) (vector-iterator-i v))
                  (set-vector-iterator-i! v (add1 (vector-iterator-i v)))))])
     (define (make-iterator v) (vector-iterator v 0 (vector-length v)))
-    (define length vector-length)
-    (define ref    vector-ref)
+    (define length   vector-length)
+    (define ref      vector-ref)
     ;; no structural building
     (struct vector-builder (l) #:mutable #:transparent
             #:methods gen:builder
@@ -808,6 +823,9 @@
 
     (check-equal? (ref (kons-list '(1 2 3)) 0) 1)
     (check-equal? (ref (kons-list '(1 2 3)) 2) 3)
+    (check-equal? (with-output-to-string
+                    (lambda () (for-each display (kons-list '(1 2 3)))))
+                  "123")
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -956,6 +974,14 @@
 
     (check-equal? (ref (vektor '#(1 2 3)) 0) 1)
     (check-equal? (ref (vektor '#(1 2 3)) 2) 3)
+    (check-equal? (with-output-to-string
+                    (lambda () (for-each display (vektor '#(1 2 3)))))
+                  "123")
+    (check-equal? (with-output-to-string
+                    (lambda () (for-each (lambda (x y) (display (- x y)))
+                                         (kons-list '(1 2 3))
+                                         (kons-list '(0 1 2)))))
+                  "111")
     ))
 
 (struct range-struct (min max) #:transparent
