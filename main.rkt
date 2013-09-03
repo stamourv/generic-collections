@@ -192,6 +192,27 @@
        ;; TODO can I do it without the append?
        (-loop (-rest) (apply f (r:append (-first) (list acc)))))))
 
+(define fallback-andmap
+  (traversal
+   (f) ()
+   (if (-empty?)
+       #t
+       (and (f (-first)) (-loop (-rest))))
+   (if (-empty?)
+       #t
+       (and (apply f (-first)) (-loop (-rest))))))
+
+(define fallback-ormap
+  (traversal
+   (f) ()
+   (if (-empty?)
+       #f
+       (or (f (-first)) (-loop (-rest))))
+   (if (-empty?)
+       #f
+       (or (apply f (-first)) (-loop (-rest))))))
+
+
 (define (can-do-structural-building? c)
   (and (collection-implements? c 'make-empty)
        (collection-implements? c 'cons)))
@@ -482,6 +503,8 @@
   [length collection]
   [foldr f base collection . cs]
   [foldl f base collection . cs]
+  [andmap f collection . cs]
+  [ormap  f collection . cs]
 
   ;; Structural building
   [make-empty collection] ; returns a new empty coll. (think `(λ (l) '())')
@@ -509,22 +532,22 @@
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; list-ref, list-tail, append, andmap, ormap, for-each, remove (+
-  ;; remq, remf and co), remove* (+ remq* and co), sort, member (+ memq,
-  ;; memf and co) (or leave that to sets, and have collections be
-  ;; sets?), second, third and co, last, take, drop, split-at, takef,
-  ;; dropf, splitf-at, take-right, drop-right, split-at-right,
-  ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
-  ;; flatten, remove-duplicates, filter-map, count, partition,
-  ;; append-map, filter-not, shuffle, permutations, in-permutations,
-  ;; argmin, argmax, ->list, list->, string-trim, string-replace,
-  ;; string-split, string-join, string-fill!, vector-copy!, vector-copy,
-  ;; vector-set*!, vector-map!, list-prefix?, take-common-prefix,
-  ;; drop-common-prefix, split-common-prefix, filter-multiple, extend,
-  ;; check-duplicate, group-by (change interface as discussed with eli),
-  ;; list-update, list-set, slice (like in-slice), cons* / list*, take!,
-  ;; drop! (and others in that family), append!, append*!, reverse!,
-  ;; zip, unzip[1..5], unfold, unfold-right, append-map!, filter!,
+  ;; list-ref, list-tail, append, for-each, remove (+ remq, remf and
+  ;; co), remove* (+ remq* and co), sort, member (+ memq, memf and co)
+  ;; (or leave that to sets, and have collections be sets?), second,
+  ;; third and co, last, take, drop, split-at, takef, dropf, splitf-at,
+  ;; take-right, drop-right, split-at-right, takef-right, dropf-right,
+  ;; splitf-at-right, add-between, append*, flatten, remove-duplicates,
+  ;; filter-map, count, partition, append-map, filter-not, shuffle,
+  ;; permutations, in-permutations, argmin, argmax, ->list, list->,
+  ;; string-trim, string-replace, string-split, string-join,
+  ;; string-fill!, vector-copy!, vector-copy, vector-set*!, vector-map!,
+  ;; list-prefix?, take-common-prefix, drop-common-prefix,
+  ;; split-common-prefix, filter-multiple, extend, check-duplicate,
+  ;; group-by (change interface as discussed with eli), list-update,
+  ;; list-set, slice (like in-slice), cons* / list*, take!, drop! (and
+  ;; others in that family), append!, append*!, reverse!, zip,
+  ;; unzip[1..5], unfold, unfold-right, append-map!, filter!,
   ;; partition!, remove!, list-index, list-index-right, substring,
   ;; string-pad (avoid string-pad-right in the same way as
   ;; racket/string's string-trim), compare (like string<? and co, but
@@ -539,6 +562,8 @@
    (define length fallback-length)
    (define foldr  fallback-foldr)
    (define foldl  fallback-foldl)
+   (define andmap fallback-andmap)
+   (define ormap  fallback-ormap)
 
    ;; Derived buildings, depend on either kind of basic building
    (define range  fallback-range)
@@ -571,6 +596,16 @@
           (apply fallback-foldl f base ls)))
     (define (make-empty _)
       l:empty)
+    (define (andmap f . ls)
+      (if (r:andmap list? ls)
+          (apply r:andmap f ls) ; homogeneous case
+          ;; heterogeneous case, use fallback
+          (apply fallback-andmap f ls)))
+    (define (ormap f . ls)
+      (if (r:andmap list? ls)
+          (apply r:ormap f ls) ; homogeneous case
+          ;; heterogeneous case, use fallback
+          (apply fallback-ormap f ls)))
     (define cons  r:cons)
     ;; no stateful building
     (define range l:range)
@@ -724,6 +759,18 @@
     (check-equal? (range mt 10 15 1.5)
                   (kons-list '(10 11.5 13.0 14.5)))
 
+    (check-equal? (andmap positive? (kons-list '(1 2 3 4))) #t)
+    (check-equal? (andmap positive? (kons-list '(1 2 3 -4))) #f)
+    (check-equal? (andmap < (kons-list '(1 2 3)) (kons-list '(4 5 6))) #t)
+    (check-equal? (andmap < (kons-list '(1 2 3)) (kons-list '(4 5 0))) #f)
+    (check-equal? (andmap < (kons-list '(1 2 3)) '(4 5 6)) #t)
+    (check-equal? (andmap < (kons-list '(1 2 3)) '(4 5 0)) #f)
+    (check-equal? (ormap positive? (kons-list '(-1 2 3 4))) #t)
+    (check-equal? (ormap positive? (kons-list '(-1 -2 -3 -4))) #f)
+    (check-equal? (ormap < (kons-list '(1 2 3)) (kons-list '(0 1 6))) #t)
+    (check-equal? (ormap < (kons-list '(1 2 3)) (kons-list '(0 0 0))) #f)
+    (check-equal? (ormap < (kons-list '(1 2 3)) '(0 1 6)) #t)
+    (check-equal? (ormap < (kons-list '(1 2 3)) '(0 0 0)) #f)
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -856,6 +903,19 @@
     (check-equal? (reverse (vektor '#(1 2 3))) (vektor '#(3 2 1)))
     (check-equal? (n-ary-reverse (vektor '#(1 2 3)) (kons-list '(4 5 6)))
                   (vektor '#((3 6) (2 5) (1 4))))
+
+    (check-equal? (andmap positive? (vektor '#(1 2 3 4))) #t)
+    (check-equal? (andmap positive? (vektor '#(1 2 3 -4))) #f)
+    (check-equal? (andmap < (vektor '#(1 2 3)) (vektor '#(4 5 6))) #t)
+    (check-equal? (andmap < (vektor '#(1 2 3)) (vektor '#(4 5 0))) #f)
+    (check-equal? (andmap < (vektor '#(1 2 3)) '(4 5 6)) #t)
+    (check-equal? (andmap < (vektor '#(1 2 3)) '(4 5 0)) #f)
+    (check-equal? (ormap positive? (vektor '#(-1 2 3 4))) #t)
+    (check-equal? (ormap positive? (vektor '#(-1 -2 -3 -4))) #f)
+    (check-equal? (ormap < (vektor '#(1 2 3)) (vektor '#(0 1 6))) #t)
+    (check-equal? (ormap < (vektor '#(1 2 3)) (vektor '#(0 0 0))) #f)
+    (check-equal? (ormap < (vektor '#(1 2 3)) '(0 1 6)) #t)
+    (check-equal? (ormap < (vektor '#(1 2 3)) '(0 0 0)) #f)
     ))
 
 (struct range-struct (min max) #:transparent
