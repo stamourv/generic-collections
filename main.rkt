@@ -559,6 +559,24 @@
    #f
    #f))
 
+(define fallback-remove*
+  (transducer
+   (x #:equal? [= equal?]) () ()
+   (if (-empty?)
+       (-base)
+       (let ([head (-first)])
+         (if (= head x)
+             (-loop (-rest))
+             (cons head (-loop (-rest))))))
+   (if (-empty?)
+       'done
+       (let ([head (-first)])
+         (unless (= head x)
+           (add-next head (-base)))
+         (-loop (-rest))))
+   #f
+   #f))
+
 
 ;;;---------------------------------------------------------------------------
 ;;; Interface definitions
@@ -651,29 +669,30 @@
   [reverse collection]
   [append collection . cs]
   ;; not exactly like current `remove', but consistent with `member?'
-  [remove x collection #:equal? [=]]
+  [remove  x collection #:equal? [=]]
+  [remove* x collection #:equal? [=]]
 
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; remove* (+ remq* and co), sort, second, third and co, last, take,
-  ;; drop, split-at, takef, dropf, splitf-at, take-right, drop-right,
-  ;; split-at-right, takef-right, dropf-right, splitf-at-right,
-  ;; add-between, append*, flatten, remove-duplicates, filter-map,
-  ;; count, partition, append-map, filter-not, shuffle, permutations,
-  ;; in-permutations, argmin, argmax, ->list, list->, string-trim,
-  ;; string-replace, string-split, string-join, string-fill!,
-  ;; vector-copy!, vector-copy, vector-set*!, vector-map!, list-prefix?,
-  ;; take-common-prefix, drop-common-prefix, split-common-prefix,
-  ;; filter-multiple, extend, check-duplicate, group-by (change
-  ;; interface as discussed with eli), list-update, list-set, slice
-  ;; (like in-slice), cons* / list*, take!, drop! (and others in that
-  ;; family), append!, append*!, reverse!, zip, unzip[1..5], unfold,
-  ;; unfold-right, append-map!, filter!, partition!, remove!,
-  ;; list-index, list-index-right, substring, string-pad (avoid
-  ;; string-pad-right in the same way as racket/string's string-trim),
-  ;; compare (like string<? and co, but takes a comparison procedure,
-  ;; like sort), sliding window, convolve, rotate
+  ;; sort, second, third and co, last, take, drop, split-at, takef,
+  ;; dropf, splitf-at, take-right, drop-right, split-at-right,
+  ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
+  ;; flatten, remove-duplicates, filter-map, count, partition,
+  ;; append-map, filter-not, shuffle, permutations, in-permutations,
+  ;; argmin, argmax, ->list, list->, string-trim, string-replace,
+  ;; string-split, string-join, string-fill!, vector-copy!, vector-copy,
+  ;; vector-set*!, vector-map!, list-prefix?, take-common-prefix,
+  ;; drop-common-prefix, split-common-prefix, filter-multiple, extend,
+  ;; check-duplicate, group-by (change interface as discussed with eli),
+  ;; list-update, list-set, slice (like in-slice), cons* / list*, take!,
+  ;; drop! (and others in that family), append!, append*!, reverse!,
+  ;; zip, unzip[1..5], unfold, unfold-right, append-map!, filter!,
+  ;; partition!, remove!, list-index, list-index-right, substring,
+  ;; string-pad (avoid string-pad-right in the same way as
+  ;; racket/string's string-trim), compare (like string<? and co, but
+  ;; takes a comparison procedure, like sort), sliding window, convolve,
+  ;; rotate
 
 
   #:defined-predicate collection-implements?
@@ -700,6 +719,7 @@
    (define reverse fallback-reverse)
    (define append  fallback-append)
    (define remove  fallback-remove)
+   (define remove* fallback-remove*)
    ]
 
   
@@ -758,6 +778,8 @@
                          (apply fallback-append ls))))
     (define (revove x l #:equal? [= equal?])
       (r:remove x l =))
+    (define (remove* x l #:equal? [= equal?])
+      (r:remove* x l =))
     ])
 
   ;; TODO add more defaults (hashes, strings, bytes, ports?, sequences,
@@ -944,6 +966,8 @@
 
     (check-equal? (remove 1 (kons-list '(1 1 2 3))) (kons-list '(1 2 3)))
     (check-equal? (remove 4 (kons-list '(1 1 2 3))) (kons-list '(1 1 2 3)))
+    (check-equal? (remove* 1 (kons-list '(1 1 2 3))) (kons-list '(2 3)))
+    (check-equal? (remove* 4 (kons-list '(1 1 2 3))) (kons-list '(1 1 2 3)))
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -1120,6 +1144,8 @@
 
     (check-equal? (remove 1 (vektor '#(1 1 2 3))) (vektor '#(1 2 3)))
     (check-equal? (remove 4 (vektor '#(1 1 2 3))) (vektor '#(1 1 2 3)))
+    (check-equal? (remove* 1 (vektor '#(1 1 2 3))) (vektor '#(2 3)))
+    (check-equal? (remove* 4 (vektor '#(1 1 2 3))) (vektor '#(1 1 2 3)))
     ))
 
 (struct range-struct (min max) #:transparent
