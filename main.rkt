@@ -681,18 +681,20 @@
   ;; flatten, remove-duplicates, filter-map, count, partition,
   ;; append-map, filter-not, shuffle, permutations, in-permutations,
   ;; argmin, argmax, ->list, list->, string-trim, string-replace,
-  ;; string-split, string-join, string-fill!, vector-copy!, vector-copy,
-  ;; vector-set*!, vector-map!, list-prefix?, take-common-prefix,
-  ;; drop-common-prefix, split-common-prefix, filter-multiple, extend,
-  ;; check-duplicate, group-by (change interface as discussed with eli),
-  ;; list-update, list-set, slice (like in-slice), cons* / list*, take!,
-  ;; drop! (and others in that family), append!, append*!, reverse!,
-  ;; zip, unzip[1..5], unfold, unfold-right, append-map!, filter!,
-  ;; partition!, remove!, list-index, list-index-right, substring,
-  ;; string-pad (avoid string-pad-right in the same way as
-  ;; racket/string's string-trim), compare (like string<? and co, but
-  ;; takes a comparison procedure, like sort), sliding window, convolve,
-  ;; rotate
+  ;; string-split, string-join, vector-copy, list-prefix?,
+  ;; take-common-prefix, drop-common-prefix, split-common-prefix,
+  ;; filter-multiple, extend, check-duplicate, group-by (change
+  ;; interface as discussed with eli), list-update, list-set, slice
+  ;; (like in-slice), cons* / list*, zip, unzip[1..5], unfold,
+  ;; unfold-right, list-index, list-index-right, substring, string-pad
+  ;; (avoid string-pad-right in the same way as racket/string's
+  ;; string-trim), compare (like string<? and co, but takes a comparison
+  ;; procedure, like sort), sliding window, convolve, rotate
+
+  ;; These would require an in-place update method:
+  ;; string-fill!, vector-copy!, vector-set*!, vector-map!, take!, drop!
+  ;; (and others in that family), append!, append*!, reverse!,
+  ;; append-map!, filter!, partition!, remove!
 
 
   #:defined-predicate collection-implements?
