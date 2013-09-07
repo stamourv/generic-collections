@@ -501,6 +501,45 @@
    #f
    #f))
 
+;; The `transducer' macro is good for lock-step traversals, so doesn't
+;; work here.
+(define (fallback-append c . cs)
+  (cond [(empty? cs) ; nothing to append
+         c]
+        [(can-do-structural-building? c)
+         (let loop ([rev-acc (make-empty c)]
+                    [cs      (r:cons c cs)])
+           (cond [(empty? cs)
+                  (reverse rev-acc)]
+                 [else
+                  (loop (structural-append2 (l:first cs) rev-acc)
+                        (l:rest cs))]))]
+        [(can-do-stateful-building? c)
+         (define builder (make-builder c))
+         (let loop ([cs (r:cons c cs)])
+           (cond [(empty? cs)
+                  (finalize builder)]
+                 [else
+                  (stateful-append2 (l:first cs) builder)
+                  (loop (l:rest cs))]))]
+        [else
+         (error "cannot build collection" c)]))
+(define structural-append2
+  (traversal
+   (-coll rev-acc) ([rev-acc rev-acc])
+   (if (-empty?)
+       rev-acc
+       (-loop (-rest) (cons (-first) rev-acc)))
+   #f))
+(define stateful-append2
+  (traversal
+   (-coll builder) ()
+   (if (-empty?)
+       (void)
+       (begin (add-next (-first) builder)
+              (-loop (-rest))))
+   #f))
+
 
 ;;;---------------------------------------------------------------------------
 ;;; Interface definitions
@@ -591,24 +630,25 @@
   [map f collection . cs]
   [filter f collection]
   [reverse collection]
+  [append collection . cs]
 
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; append, remove (+ remq, remf and co), remove* (+ remq* and co),
-  ;; sort, second, third and co, last, take, drop, split-at, takef,
-  ;; dropf, splitf-at, take-right, drop-right, split-at-right,
-  ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
-  ;; flatten, remove-duplicates, filter-map, count, partition,
-  ;; append-map, filter-not, shuffle, permutations, in-permutations,
-  ;; argmin, argmax, ->list, list->, string-trim, string-replace,
-  ;; string-split, string-join, string-fill!, vector-copy!, vector-copy,
-  ;; vector-set*!, vector-map!, list-prefix?, take-common-prefix,
-  ;; drop-common-prefix, split-common-prefix, filter-multiple, extend,
-  ;; check-duplicate, group-by (change interface as discussed with eli),
-  ;; list-update, list-set, slice (like in-slice), cons* / list*, take!,
-  ;; drop! (and others in that family), append!, append*!, reverse!,
-  ;; zip, unzip[1..5], unfold, unfold-right, append-map!, filter!,
+  ;; remove (+ remq, remf and co), remove* (+ remq* and co), sort,
+  ;; second, third and co, last, take, drop, split-at, takef, dropf,
+  ;; splitf-at, take-right, drop-right, split-at-right, takef-right,
+  ;; dropf-right, splitf-at-right, add-between, append*, flatten,
+  ;; remove-duplicates, filter-map, count, partition, append-map,
+  ;; filter-not, shuffle, permutations, in-permutations, argmin, argmax,
+  ;; ->list, list->, string-trim, string-replace, string-split,
+  ;; string-join, string-fill!, vector-copy!, vector-copy, vector-set*!,
+  ;; vector-map!, list-prefix?, take-common-prefix, drop-common-prefix,
+  ;; split-common-prefix, filter-multiple, extend, check-duplicate,
+  ;; group-by (change interface as discussed with eli), list-update,
+  ;; list-set, slice (like in-slice), cons* / list*, take!, drop! (and
+  ;; others in that family), append!, append*!, reverse!, zip,
+  ;; unzip[1..5], unfold, unfold-right, append-map!, filter!,
   ;; partition!, remove!, list-index, list-index-right, substring,
   ;; string-pad (avoid string-pad-right in the same way as
   ;; racket/string's string-trim), compare (like string<? and co, but
@@ -638,6 +678,7 @@
    (define map     fallback-map)
    (define filter  fallback-filter)
    (define reverse fallback-reverse)
+   (define append  fallback-append)
    ]
 
   
@@ -690,6 +731,10 @@
           (apply fallback-map f ls)))
     (define filter  r:filter)
     (define reverse r:reverse)
+    (define append (lambda ls
+                     (if (r:andmap list? ls)
+                         (apply r:append ls)
+                         (apply fallback-append ls))))
     ])
 
   ;; TODO add more defaults (hashes, strings, bytes, ports?, sequences,
@@ -724,6 +769,10 @@
                          ;; heterogeneous case, use fallback
                          (apply fallback-map f ls))))
     (define filter vector-filter)
+    (define append (lambda vs
+                     (if (r:andmap vector? vs)
+                         (apply vector-append vs)
+                         (apply fallback-append vs))))
     ])
   )
 
@@ -858,6 +907,17 @@
     (check-equal? (member? 4 (kons-list '(1 2 3)) #:equal? (lambda _ #t)) 1)
     (check-equal? (member? 4 (kons-list '(1 2 3)) 'fail) 'fail)
     (check-equal? (member? 4 (kons-list '(1 2 3)) (lambda () 'fail)) 'fail)
+
+    (check-equal? (append (kons-list '(1 2))
+                          (kons-list '())
+                          (kons-list '(3 4)))
+                  (kons-list '(1 2 3 4)))
+    (check-equal? (append (kons-list '(1 2)))
+                  (kons-list '(1 2)))
+    (check-equal? (append (kons-list '(1 2)) '(3 4))
+                  (kons-list '(1 2 3 4)))
+    (check-equal? (append '(1 2) (kons-list '(3 4)))
+                  '(1 2 3 4))
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -1022,6 +1082,15 @@
     (check-equal? (member? 4 (vektor '#(1 2 3)) #:equal? (lambda _ #t)) 1)
     (check-equal? (member? 4 (vektor '#(1 2 3)) 'fail) 'fail)
     (check-equal? (member? 4 (vektor '#(1 2 3)) (lambda () 'fail)) 'fail)
+
+    (check-equal? (append (vektor '#(1 2))
+                          (vektor '#())
+                          (vektor '#(3 4)))
+                  (vektor '#(1 2 3 4)))
+    (check-equal? (append (vektor '#(1 2)))
+                  (vektor '#(1 2)))
+    (check-equal? (append (vektor '#(-1 0)) (kons-list '(1 2)) '(3 4))
+                  (vektor '#(-1 0 1 2 3 4)))
     ))
 
 (struct range-struct (min max) #:transparent
