@@ -183,7 +183,6 @@
         [else
          (raise-syntax-error
           'traversal "need to provide at least one body" stx)]))]))
-;; TODO implement transducer using traversal?
 
 (define fallback-foldr
   (traversal
