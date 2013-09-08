@@ -245,6 +245,25 @@
           (-loop (-rest!) (sub1 i))])
    #f))
 
+(define (fallback-second c)
+  (ref c 1))
+(define (fallback-third c)
+  (ref c 2))
+(define (fallback-fourth c)
+  (ref c 3))
+(define (fallback-fifth c)
+  (ref c 4))
+(define (fallback-sixth c)
+  (ref c 5))
+(define (fallback-seventh c)
+  (ref c 6))
+(define (fallback-eighth c)
+  (ref c 7))
+(define (fallback-ninth c)
+  (ref c 8))
+(define (fallback-tenth c)
+  (ref c 9))
+
 (define fallback-for-each
   (traversal
    (f -coll) ()
@@ -640,7 +659,15 @@
   [ormap  f collection . cs]
   ;; This one makes a lot of sense to override for vector-like things.
   ;; Some derived methods may want to use this instead of iterators.
-  [ref collection i]
+  [ref     collection i]
+  [second  collection]
+  [third   collection]
+  [fourth  collection]
+  [fifth   collection]
+  [sixth   collection]
+  [seventh collection]
+  [eighth  collection]
+  [ninth   collection]
   [for-each f collection . cs]
   ;; TODO leave member? to sets?
   [member? x collection #:equal? [=] [failure-result/thunk]]
@@ -675,22 +702,21 @@
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; sort (use r:sort + ->list and list->), second, third and co, last,
-  ;; take, drop, split-at, takef, dropf, splitf-at, take-right,
-  ;; drop-right, split-at-right, takef-right, dropf-right,
-  ;; splitf-at-right, add-between, append*, flatten, remove-duplicates,
-  ;; filter-map, count, partition, append-map, filter-not, shuffle,
-  ;; permutations, in-permutations, argmin, argmax, ->list, list->,
-  ;; string-trim, string-replace, string-split, string-join,
-  ;; vector-copy, list-prefix?, take-common-prefix, drop-common-prefix,
-  ;; split-common-prefix, filter-multiple, extend, check-duplicate,
-  ;; group-by (change interface as discussed with eli), list-update,
-  ;; list-set, slice (like in-slice), cons* / list*, zip, unzip[1..5],
-  ;; unfold, unfold-right, list-index, list-index-right, substring,
-  ;; string-pad (avoid string-pad-right in the same way as
-  ;; racket/string's string-trim), compare (like string<? and co, but
-  ;; takes a comparison procedure, like sort), sliding window, convolve,
-  ;; rotate
+  ;; sort (use r:sort + ->list and list->), last, take, drop, split-at,
+  ;; takef, dropf, splitf-at, take-right, drop-right, split-at-right,
+  ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
+  ;; flatten, remove-duplicates, filter-map, count, partition,
+  ;; append-map, filter-not, shuffle, permutations, in-permutations,
+  ;; argmin, argmax, ->list, list->, string-trim, string-replace,
+  ;; string-split, string-join, vector-copy, list-prefix?,
+  ;; take-common-prefix, drop-common-prefix, split-common-prefix,
+  ;; filter-multiple, extend, check-duplicate, group-by (change
+  ;; interface as discussed with eli), list-update, list-set, slice
+  ;; (like in-slice), cons* / list*, zip, unzip[1..5], unfold,
+  ;; unfold-right, list-index, list-index-right, substring, string-pad
+  ;; (avoid string-pad-right in the same way as racket/string's
+  ;; string-trim), compare (like string<? and co, but takes a comparison
+  ;; procedure, like sort), sliding window, convolve, rotate
 
   ;; These would require an in-place update method:
   ;; string-fill!, vector-copy!, vector-set*!, vector-map!, take!, drop!
@@ -708,6 +734,15 @@
    (define andmap   fallback-andmap)
    (define ormap    fallback-ormap)
    (define ref      fallback-ref)
+   (define second   fallback-second)
+   (define third    fallback-third)
+   (define fourth   fallback-fourth)
+   (define fifth    fallback-fifth)
+   (define sixth    fallback-sixth)
+   (define seventh  fallback-seventh)
+   (define eighth   fallback-eighth)
+   (define ninth    fallback-ninth)
+   (define tenth    fallback-tenth)
    (define for-each fallback-for-each)
    (define member?  fallback-member?)
 
@@ -754,6 +789,15 @@
           ;; heterogeneous case, use fallback
           (apply fallback-ormap f ls)))
     (define ref      r:list-ref)
+    (define second   l:second)
+    (define third    l:third)
+    (define fourth   l:fourth)
+    (define fifth    l:fifth)
+    (define sixth    l:sixth)
+    (define seventh  l:seventh)
+    (define eighth   l:eighth)
+    (define ninth    l:ninth)
+    (define tenth    l:tenth)
     (define for-each r:for-each)
     ;; stock member is not the same
     (define (member? x l #:equal? [=? equal?] [fail member?-error-thunk])
@@ -971,6 +1015,9 @@
     (check-equal? (remove 4 (kons-list '(1 1 2 3))) (kons-list '(1 1 2 3)))
     (check-equal? (remove* 1 (kons-list '(1 1 2 3))) (kons-list '(2 3)))
     (check-equal? (remove* 4 (kons-list '(1 1 2 3))) (kons-list '(1 1 2 3)))
+
+    (check-equal? (second (kons-list '(1 2 3))) 2)
+    (check-equal? (third (kons-list '(1 2 3))) 3)
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -1233,5 +1280,10 @@
     (check-equal? (remove 4 '(1 1 2 3)) '(1 1 2 3))
     (check-equal? (remove 1 '#(1 1 2 3)) '#(1 2 3))
     (check-equal? (remove 4 '#(1 1 2 3)) '#(1 1 2 3))
+
+    (check-equal? (second '(1 2 3)) 2)
+    (check-equal? (third '(1 2 3)) 3)
+    (check-equal? (second '#(1 2 3)) 2)
+    (check-equal? (third '#(1 2 3)) 3)
 
     ))
