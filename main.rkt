@@ -264,6 +264,26 @@
 (define (fallback-tenth c)
   (ref c 9))
 
+;; Doesn't really fit the `traversal' pattern (needs lookahead).
+(define (fallback-last c)
+  (cond [(can-do-structural-traversal? c)
+         (if (empty? c)
+             (error "last of empty collection" c)
+             (let loop ([c (rest c)] [prev (first c)])
+               (if (empty? c)
+                   prev
+                   (loop (rest c) (first c)))))]
+        [(can-do-stateful-traversal? c)
+         (define it (make-iterator c))
+         (if (has-next? it)
+             (let loop ([prev (next it)])
+               (if (has-next? it)
+                   (loop (next it))
+                   prev))
+             (error "last of empty collection" c))]
+        [else
+         (error "cannot traverse collection" c)]))
+
 (define fallback-for-each
   (traversal
    (f -coll) ()
@@ -668,6 +688,7 @@
   [seventh collection]
   [eighth  collection]
   [ninth   collection]
+  [last    collection]
   [for-each f collection . cs]
   ;; TODO leave member? to sets?
   [member? x collection #:equal? [=] [failure-result/thunk]]
@@ -702,8 +723,8 @@
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
-  ;; sort (use r:sort + ->list and list->), last, take, drop, split-at,
-  ;; takef, dropf, splitf-at, take-right, drop-right, split-at-right,
+  ;; sort (use r:sort + ->list and list->), take, drop, split-at, takef,
+  ;; dropf, splitf-at, take-right, drop-right, split-at-right,
   ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
   ;; flatten, remove-duplicates, filter-map, count, partition,
   ;; append-map, filter-not, shuffle, permutations, in-permutations,
@@ -743,6 +764,7 @@
    (define eighth   fallback-eighth)
    (define ninth    fallback-ninth)
    (define tenth    fallback-tenth)
+   (define last     fallback-last)
    (define for-each fallback-for-each)
    (define member?  fallback-member?)
 
@@ -798,6 +820,7 @@
     (define eighth   l:eighth)
     (define ninth    l:ninth)
     (define tenth    l:tenth)
+    (define last     l:last)
     (define for-each r:for-each)
     ;; stock member is not the same
     (define (member? x l #:equal? [=? equal?] [fail member?-error-thunk])
@@ -845,6 +868,7 @@
     (define (make-iterator v) (vector-iterator v 0 (vector-length v)))
     (define length   vector-length)
     (define ref      vector-ref)
+    (define (last v) (vector-ref v (sub1 (vector-length v))))
     ;; no structural building
     (struct vector-builder (l) #:mutable #:transparent
             #:methods gen:builder
@@ -1018,6 +1042,7 @@
 
     (check-equal? (second (kons-list '(1 2 3))) 2)
     (check-equal? (third (kons-list '(1 2 3))) 3)
+    (check-equal? (last (kons-list '(1 2 3))) 3)
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -1196,6 +1221,8 @@
     (check-equal? (remove 4 (vektor '#(1 1 2 3))) (vektor '#(1 1 2 3)))
     (check-equal? (remove* 1 (vektor '#(1 1 2 3))) (vektor '#(2 3)))
     (check-equal? (remove* 4 (vektor '#(1 1 2 3))) (vektor '#(1 1 2 3)))
+
+    (check-equal? (last (vektor '#(1 2 3))) 3)
     ))
 
 (struct range-struct (min max) #:transparent
