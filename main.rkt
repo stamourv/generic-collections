@@ -737,7 +737,7 @@
   ;; unfold-right, list-index, list-index-right, substring, string-pad
   ;; (avoid string-pad-right in the same way as racket/string's
   ;; string-trim), compare (like string<? and co, but takes a comparison
-  ;; procedure, like sort), sliding window, convolve, rotate
+  ;; procedure, like sort), sliding window, convolve, rotate, apply
 
   ;; These would require an in-place update method:
   ;; string-fill!, vector-copy!, vector-set*!, vector-map!, take!, drop!
