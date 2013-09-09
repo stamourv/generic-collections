@@ -711,6 +711,15 @@
    [else
     (error "cannot traverse or build collection" coll)]))
 
+(define (fallback-take-right coll n) ; TODO add error checks for negatives
+  ;; Or could call the fallbacks directly, to not change behavior if `take'
+  ;; is overridden.
+  (drop coll (- (length coll) n)))
+(define (fallback-drop-right coll n)
+  (take coll (- (length coll) n)))
+(define (fallback-split-at-right coll n)
+  (split-at coll (- (length coll) n)))
+
 
 ;;;---------------------------------------------------------------------------
 ;;; Interface definitions
@@ -817,25 +826,27 @@
   [take     collection n]
   [drop     collection n]
   [split-at collection n]
+  [take-right     collection n]
+  [drop-right     collection n]
+  [split-at-right collection n]
 
   ;; TODO other operations (from racket/base, racket/list, racket/string
   ;; racket/vector, srfi/1, srfi/43, unstable/list and others):
 
   ;; sort (use r:sort + ->list and list->), takef, dropf, splitf-at,
-  ;; take-right, drop-right, split-at-right, takef-right, dropf-right,
-  ;; splitf-at-right, add-between, append*, flatten, remove-duplicates,
-  ;; filter-map, count, partition, append-map, filter-not, shuffle,
-  ;; permutations, in-permutations, argmin, argmax, ->list, list->,
-  ;; string-trim, string-replace, string-split, string-join,
-  ;; vector-copy, list-prefix?, take-common-prefix, drop-common-prefix,
-  ;; split-common-prefix, filter-multiple, extend, check-duplicate,
-  ;; group-by (change interface as discussed with eli), list-update,
-  ;; list-set, slice (like in-slice), cons* / list*, zip, unzip[1..5],
-  ;; unfold, unfold-right, list-index, list-index-right, substring,
-  ;; string-pad (avoid string-pad-right in the same way as
-  ;; racket/string's string-trim), compare (like string<? and co, but
-  ;; takes a comparison procedure, like sort), sliding window, convolve,
-  ;; rotate, apply
+  ;; takef-right, dropf-right, splitf-at-right, add-between, append*,
+  ;; flatten, remove-duplicates, filter-map, count, partition,
+  ;; append-map, filter-not, shuffle, permutations, in-permutations,
+  ;; argmin, argmax, ->list, list->, string-trim, string-replace,
+  ;; string-split, string-join, vector-copy, list-prefix?,
+  ;; take-common-prefix, drop-common-prefix, split-common-prefix,
+  ;; filter-multiple, extend, check-duplicate, group-by (change
+  ;; interface as discussed with eli), list-update, list-set, slice
+  ;; (like in-slice), cons* / list*, zip, unzip[1..5], unfold,
+  ;; unfold-right, list-index, list-index-right, substring, string-pad
+  ;; (avoid string-pad-right in the same way as racket/string's
+  ;; string-trim), compare (like string<? and co, but takes a comparison
+  ;; procedure, like sort), sliding window, convolve, rotate, apply
 
   ;; These would require an in-place update method:
   ;; string-fill!, vector-copy!, vector-set*!, vector-map!, take!, drop!
@@ -872,15 +883,18 @@
    (define build  fallback-build)
 
    ;; Derived transducers, need both a way to traverse and a way to build
-   (define map      fallback-map)
-   (define filter   fallback-filter)
-   (define reverse  fallback-reverse)
-   (define append   fallback-append)
-   (define remove   fallback-remove)
-   (define remove*  fallback-remove*)
-   (define take     fallback-take)
-   (define drop     fallback-drop)
-   (define split-at fallback-split-at)
+   (define map            fallback-map)
+   (define filter         fallback-filter)
+   (define reverse        fallback-reverse)
+   (define append         fallback-append)
+   (define remove         fallback-remove)
+   (define remove*        fallback-remove*)
+   (define take           fallback-take)
+   (define drop           fallback-drop)
+   (define split-at       fallback-split-at)
+   (define take-right     fallback-take-right)
+   (define drop-right     fallback-drop-right)
+   (define split-at-right fallback-split-at-right)
    ]
 
   
@@ -951,10 +965,13 @@
       (r:remove x l =))
     (define (remove* x l #:equal? [= equal?])
       (r:remove* x l =))
-    (define take     l:take)
-    (define drop     l:drop)
-    (define split-at l:split-at)
-    ])
+    (define take           l:take)
+    (define drop           l:drop)
+    (define split-at       l:split-at) 
+    (define take-right     l:take-right)
+    (define drop-right     l:drop-right)
+    (define split-at-right l:split-at-right)
+   ])
 
   ;; TODO add more defaults (hashes, strings, bytes, ports?, sequences,
   ;;  streams, uniform vectors, math/array, dicts, sets, mlists,
@@ -1160,6 +1177,18 @@
                       (lambda () (split-at (kons-list '(1 2 3)) 2))
                     r:cons)
                   (r:cons (kons-list '(1 2)) (kons-list '(3))))
+    (check-equal? (take-right (kons-list '(1 2 3)) 0) (kons-list '()))
+    (check-equal? (take-right (kons-list '(1 2 3)) 2) (kons-list '(2 3)))
+    (check-equal? (drop-right (kons-list '(1 2 3)) 0) (kons-list '(1 2 3)))
+    (check-equal? (drop-right (kons-list '(1 2 3)) 2) (kons-list '(1)))
+    (check-equal? (call-with-values
+                      (lambda () (split-at-right (kons-list '(1 2 3)) 0))
+                    r:cons)
+                  (r:cons (kons-list '(1 2 3)) (kons-list '())))
+    (check-equal? (call-with-values
+                      (lambda () (split-at-right (kons-list '(1 2 3)) 2))
+                    r:cons)
+                  (r:cons (kons-list '(1)) (kons-list '(2 3))))
     ))
 
 (struct kons-list/length (l elts) #:transparent
@@ -1353,6 +1382,18 @@
                       (lambda () (split-at (vektor '#(1 2 3)) 2))
                     r:cons)
                   (r:cons (vektor '#(1 2)) (vektor '#(3))))
+    (check-equal? (take-right (vektor '#(1 2 3)) 0) (vektor '#()))
+    (check-equal? (take-right (vektor '#(1 2 3)) 2) (vektor '#(2 3)))
+    (check-equal? (drop-right (vektor '#(1 2 3)) 0) (vektor '#(1 2 3)))
+    (check-equal? (drop-right (vektor '#(1 2 3)) 2) (vektor '#(1)))
+    (check-equal? (call-with-values
+                      (lambda () (split-at-right (vektor '#(1 2 3)) 0))
+                    r:cons)
+                  (r:cons (vektor '#(1 2 3)) (vektor '#())))
+    (check-equal? (call-with-values
+                      (lambda () (split-at-right (vektor '#(1 2 3)) 2))
+                    r:cons)
+                  (r:cons (vektor '#(1)) (vektor '#(2 3))))
     ))
 
 (struct range-struct (min max) #:transparent
