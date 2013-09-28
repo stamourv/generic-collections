@@ -15,7 +15,7 @@
          ref first second third fourth fifth sixth seventh eighth ninth last
          for-each member?
 
-         make-empty cons
+         make-empty (rename-out [cons/export cons])
          make-builder
          ;; range make build ; provided via define-builder
 
@@ -736,6 +736,15 @@
 (define (fallback-split-at-right coll n)
   (split-at coll (- (length coll) n)))
 
+
+;; The `cons' method can only cons on top of collections, so it can't be used
+;; to create plain pairs. Need to wrap it to allow that.
+;; In the future, maybe `cons' should have the behavior from the student langs
+;; and improper lists should disappear.
+(define (cons/export a r)
+  (if (collection? r)
+      (cons a r)
+      (r:cons a r)))
 
 ;;;---------------------------------------------------------------------------
 ;;; Interface definitions
