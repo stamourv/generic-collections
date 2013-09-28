@@ -5,7 +5,23 @@
 (require racket/stxparam
          (for-syntax racket/syntax))
 
-;; TODO add exports
+(provide gen:collection collection?
+         gen:iterator iterator? has-next? next
+         gen:builder builder? add-next finalize
+
+         empty? first rest
+         make-iterator
+         length foldr foldl andmap ormap
+         ref first second third fourth fifth sixth seventh eighth ninth last
+         for-each member?
+
+         make-empty cons
+         make-builder
+         range make build
+
+         map filter reverse append remove remove*
+         take drop split-at take-right drop-right split-at-right
+         )
 
 ;;;---------------------------------------------------------------------------
 ;;; Fallback implementations
