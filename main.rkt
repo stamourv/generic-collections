@@ -17,7 +17,7 @@
 
          make-empty cons
          make-builder
-         range make build
+         ;; range make build ; provided via define-builder
 
          map filter reverse append remove remove*
          take drop split-at take-right drop-right split-at-right
