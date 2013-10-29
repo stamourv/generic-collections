@@ -6,8 +6,8 @@
 (struct range-struct (min max) #:transparent
         #:methods gen:collection
         ;; make sure that this is overridden, even when calling range
-        [(define/generic generic-build build)
-         (define (range c n [m #f] [step #f])
+        [(define/generic generic-build build-method)
+         (define (range-method c n [m #f] [step #f])
            ;; not a complete or correct implementation
            (generic-build (kons-list '())
                           (- (range-struct-max c) (range-struct-min c))

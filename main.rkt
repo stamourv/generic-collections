@@ -17,7 +17,7 @@
 
          make-empty (rename-out [cons/export cons])
          make-builder
-         ;; range make build ; provided via define-builder
+         range make build
 
          map filter reverse append remove remove*
          take drop split-at take-right drop-right split-at-right
@@ -355,17 +355,16 @@
 
 (define-syntax (define-builder stx)
   (syntax-case stx ()
-    [(_ [name export-name fallback-name default-name]
+    [(_ [name fallback-name method-name default-name]
         body)
      (quasisyntax/loc stx
        (begin
-         (provide (rename-out [export-name name]))
          (define fallback-name
            body)
-         (define (export-name #:collection [c #f] . args)
+         (define (name #:collection [c #f] . args)
            ;; TODO raise proper arity errors
            (if c
-               (apply name c args)
+               (apply method-name c args)
                (apply default-name args)))))]))
 
 (define-syntax (building stx)
@@ -397,7 +396,7 @@
 ;; User-facing `range', only optionally takes a collection to dispatch on,
 ;; defaults to lists. Overriding methods have a different signature, which
 ;; may be confusing. Document adequately.
-(define-builder [range range/export fallback-range l:range]
+(define-builder [range fallback-range range-method l:range]
   (case-lambda
     [(c end)
      ;; Use the fallback so that clients of range don't have to know
@@ -410,7 +409,7 @@
                      (exact-ceiling (/ (- end start) step))
                      (lambda (x) (+ (* x step) start)))]))
 
-(define-builder [make make/export fallback-make make-list]
+(define-builder [make fallback-make make-method make-list]
   (building
    (n v) ([i n] [acc (-base)]) ([i 0])
    (if (= i 0)
@@ -420,7 +419,7 @@
      (add-next v (-base))
      (-loop (add1 i)))))
 
-(define-builder [build build/export fallback-build build-list]
+(define-builder [build fallback-build build-method build-list]
   (building
    (n f) ([i (sub1 n)] [acc (-base)]) ([i 0])
    (if (< i 0)
@@ -835,9 +834,9 @@
   ;; User-facing versions do not and default to lists. That does mean
   ;; that the main function and methods have different signatures, which
   ;; may be confusing.
-  [range collection x [y] [z]]
-  [make  collection n v] ; think make-list
-  [build collection n f] ; think build-list
+  [range-method collection x [y] [z]]
+  [make-method  collection n v] ; think make-list
+  [build-method collection n f] ; think build-list
   ;; TODO test overrides for these
 
   ;; Transducers
@@ -903,9 +902,11 @@
    (define member?  fallback-member?)
 
    ;; Derived buildings, depend on either kind of basic building
-   (define range  fallback-range)
-   (define make   fallback-make)
-   (define build  fallback-build)
+   ;; Method names and generic function names are different, because they
+   ;; have a different interface.
+   (define range-method fallback-range)
+   (define make-method  fallback-make)
+   (define build-method fallback-build)
 
    ;; Derived transducers, need both a way to traverse and a way to build
    (define map            fallback-map)
@@ -972,9 +973,9 @@
       l:empty)
     (define cons     r:cons)
     ;; no stateful building
-    (define range l:range)
-    (define make  make-list)
-    (define build build-list)
+    (define range-method l:range)
+    (define make-method  make-list)
+    (define build-method build-list)
     (define (map f . ls)
       (if (r:andmap list? ls)
           (apply r:map f ls) ; homogeneous case
@@ -1023,8 +1024,8 @@
              (define (finalize v)
                (list->vector (r:reverse (vector-builder-l v))))])
     (define (make-builder _) (vector-builder '()))
-    (define make   make-vector)
-    (define build  build-vector)
+    (define make-method   make-vector)
+    (define build-method  build-vector)
     (define map    (lambda (f . ls)
                      (if (r:andmap vector? ls)
                          (apply vector-map f ls) ; homogeneous case
